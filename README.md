@@ -94,6 +94,12 @@ Every list in the admin panel has:
 
 ---
 
+## 🔄 If a change doesn't seem to show up
+
+Every page loads `styles.css`, `app.js`, and `admin.js` with a `?v=20260721` tag on the end. That date only exists to force browsers to fetch the newest file instead of an old cached copy. **Ask your developer to bump that number whenever a code update is deployed** — otherwise some visitors' browsers (and GitHub Pages' own CDN) may keep showing the old version for a while after a change goes live. If something looks unchanged after an update, a hard refresh (or opening the page in a private/incognito tab) rules this out immediately.
+
+---
+
 ## 📞 Support
 
 Knot & Thread Tales, Hyderabad. For anything the admin panel can't do, or if something looks broken, reach out to your developer.
