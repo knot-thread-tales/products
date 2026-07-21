@@ -158,14 +158,15 @@ $('#logoutBtn').addEventListener('click', async () => {
 });
 
 // ── Mobile sidebar toggle ─────────────────────────────────
-$('#menuToggle')?.addEventListener('click', () => {
-  $('.admin-sidebar').classList.toggle('open');
-  $('#sidebarBackdrop')?.classList.toggle('show');
-});
-$('#sidebarBackdrop')?.addEventListener('click', () => {
-  $('.admin-sidebar').classList.remove('open');
-  $('#sidebarBackdrop')?.classList.remove('show');
-});
+function setSidebarOpen(open) {
+  $('.admin-sidebar')?.classList.toggle('open', open);
+  $('#sidebarBackdrop')?.classList.toggle('show', open);
+  $('#menuToggle')?.classList.toggle('is-hidden', open);
+}
+
+$('#menuToggle')?.addEventListener('click', () => setSidebarOpen(true));
+$('#sidebarClose')?.addEventListener('click', () => setSidebarOpen(false));
+$('#sidebarBackdrop')?.addEventListener('click', () => setSidebarOpen(false));
 
 // ── Nav ───────────────────────────────────────────────────
 $('#adminNav').addEventListener('click', (e) => {
@@ -173,8 +174,7 @@ $('#adminNav').addEventListener('click', (e) => {
   if (!btn) return;
   $$('.admin-nav-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  $('.admin-sidebar').classList.remove('open');
-  $('#sidebarBackdrop')?.classList.remove('show');
+  setSidebarOpen(false);
   State.tableSearch = ''; State.sortKey = null; State.sortDir = 'asc';
   loadView(btn.dataset.view);
 });
