@@ -119,7 +119,7 @@ const TABLE_CONFIGS = {
   },
 };
 
-let State = { view: 'products', rows: [], categoriesCache: null };
+let State = { view: 'products', rows: [], categoriesCache: null, tableSearch: '', sortKey: null, sortDir: 'asc' };
 
 // ── Auth ──────────────────────────────────────────────────
 async function checkSession() {
@@ -143,8 +143,11 @@ $('#loginForm').addEventListener('submit', async (e) => {
   const email = $('#loginEmail').value.trim();
   const password = $('#loginPassword').value;
   const errEl = $('#loginError');
+  const btn = e.target.querySelector('button[type="submit"]');
   errEl.hidden = true;
+  btn.disabled = true; btn.textContent = 'Signing in…';
   const { error } = await sb.auth.signInWithPassword({ email, password });
+  btn.disabled = false; btn.textContent = 'Sign In';
   if (error) { errEl.textContent = error.message; errEl.hidden = false; return; }
   showDashboard();
 });
@@ -154,12 +157,25 @@ $('#logoutBtn').addEventListener('click', async () => {
   showLogin();
 });
 
+// ── Mobile sidebar toggle ─────────────────────────────────
+$('#menuToggle')?.addEventListener('click', () => {
+  $('.admin-sidebar').classList.toggle('open');
+  $('#sidebarBackdrop')?.classList.toggle('show');
+});
+$('#sidebarBackdrop')?.addEventListener('click', () => {
+  $('.admin-sidebar').classList.remove('open');
+  $('#sidebarBackdrop')?.classList.remove('show');
+});
+
 // ── Nav ───────────────────────────────────────────────────
 $('#adminNav').addEventListener('click', (e) => {
   const btn = e.target.closest('.admin-nav-btn');
   if (!btn) return;
   $$('.admin-nav-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  $('.admin-sidebar').classList.remove('open');
+  $('#sidebarBackdrop')?.classList.remove('show');
+  State.tableSearch = ''; State.sortKey = null; State.sortDir = 'asc';
   loadView(btn.dataset.view);
 });
 
@@ -170,7 +186,7 @@ async function loadView(view) {
   $('#viewTitle').textContent = cfg.label;
   $('#addBtn').hidden = !!cfg.readOnly || !!cfg.singleton;
   const body = $('#viewBody');
-  body.innerHTML = '<p class="admin-empty">Loading…</p>';
+  body.innerHTML = '<div class="admin-loading"><div class="admin-spinner"></div>Loading…</div>';
 
   try {
     let q = sb.from(view).select('*');
@@ -186,36 +202,137 @@ async function loadView(view) {
     }
     renderTable(cfg, State.rows);
   } catch (err) {
-    body.innerHTML = `<p class="admin-empty">Could not load ${esc(cfg.label)}: ${esc(err.message)}</p>`;
+    body.innerHTML = `<div class="admin-empty">⚠️ Could not load ${esc(cfg.label)}: ${esc(err.message)}</div>`;
   }
 }
 
-function renderTable(cfg, rows) {
-  const body = $('#viewBody');
-  if (!rows.length) { body.innerHTML = `<p class="admin-empty">No ${esc(cfg.label.toLowerCase())} yet. Click "+ Add" to create one.</p>`; return; }
-
+// Returns rows filtered by the current search box (matches against
+// every listColumn's rendered text) and sorted by the current column.
+function getVisibleRows(cfg) {
   const cols = cfg.listColumns;
+  let rows = State.rows;
+
+  if (State.tableSearch.trim()) {
+    const term = State.tableSearch.trim().toLowerCase();
+    rows = rows.filter(r => cols.some(c => String(r[c] ?? '').toLowerCase().includes(term)));
+  }
+
+  if (State.sortKey) {
+    const dir = State.sortDir === 'asc' ? 1 : -1;
+    rows = rows.slice().sort((a, b) => {
+      let av = a[State.sortKey], bv = b[State.sortKey];
+      if (av == null) return 1; if (bv == null) return -1;
+      if (typeof av === 'string') av = av.toLowerCase();
+      if (typeof bv === 'string') bv = bv.toLowerCase();
+      return av < bv ? -1 * dir : av > bv ? 1 * dir : 0;
+    });
+  }
+  return rows;
+}
+
+function renderTable(cfg, allRows) {
+  const body = $('#viewBody');
+  const cols = cfg.listColumns;
+  const rows = getVisibleRows(cfg);
+
   body.innerHTML = `
-    <table class="admin-table">
-      <thead><tr>${cols.map(c => `<th>${esc(colLabel(cfg, c))}</th>`).join('')}<th>Actions</th></tr></thead>
-      <tbody>
-        ${rows.map(r => `
-          <tr data-id="${r.id}">
-            ${cols.map(c => `<td>${renderCell(cfg, c, r)}</td>`).join('')}
-            <td class="actions">${renderRowActions(cfg, r)}</td>
-          </tr>`).join('')}
-      </tbody>
-    </table>`;
+    <div class="admin-toolbar">
+      <div class="admin-toolbar__search">
+        <span class="admin-toolbar__search-icon">🔎</span>
+        <input type="search" id="tableSearchInput" placeholder="Search ${esc(cfg.label.toLowerCase())}…" value="${esc(State.tableSearch)}">
+      </div>
+      <div class="admin-toolbar__meta">
+        <span class="admin-toolbar__count">${rows.length} of ${allRows.length}</span>
+        <button class="admin-btn-sm" id="exportCsvBtn" ${!allRows.length ? 'disabled' : ''}>⬇ CSV</button>
+        <button class="admin-btn-sm" id="exportXlsxBtn" ${!allRows.length ? 'disabled' : ''}>⬇ Excel</button>
+      </div>
+    </div>
+    ${!rows.length
+      ? `<div class="admin-empty">${allRows.length ? '🔍 No results match your search.' : `No ${esc(cfg.label.toLowerCase())} yet. Click "+ Add" to create one.`}</div>`
+      : `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr>
+          ${cols.map(c => `<th class="sortable ${State.sortKey===c?'sorted-'+State.sortDir:''}" data-sort="${c}">${esc(colLabel(cfg, c))}<span class="sort-arrow"></span></th>`).join('')}
+          <th class="actions-col">Actions</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr data-id="${r.id}">
+              ${cols.map(c => `<td data-label="${esc(colLabel(cfg, c))}">${renderCell(cfg, c, r)}</td>`).join('')}
+              <td class="actions" data-label="Actions">${renderRowActions(cfg, r)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`}`;
 
   body.querySelectorAll('[data-act]').forEach(el => {
     el.addEventListener('click', () => handleRowAction(cfg, el.dataset.act, el.dataset.id));
   });
-
   if (cfg.statusEditable) {
     body.querySelectorAll('select[data-status-id]').forEach(sel => {
       sel.addEventListener('change', () => updateOrderStatus(sel.dataset.statusId, sel.value));
     });
   }
+
+  const searchInput = $('#tableSearchInput');
+  searchInput?.addEventListener('input', () => {
+    State.tableSearch = searchInput.value;
+    const pos = searchInput.selectionStart;
+    renderTable(cfg, allRows);
+    const el = $('#tableSearchInput');
+    el.focus(); el.setSelectionRange(pos, pos);
+  });
+
+  body.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      State.sortDir = (State.sortKey === key && State.sortDir === 'asc') ? 'desc' : 'asc';
+      State.sortKey = key;
+      renderTable(cfg, allRows);
+    });
+  });
+
+  $('#exportCsvBtn')?.addEventListener('click', () => exportTable(cfg, 'csv'));
+  $('#exportXlsxBtn')?.addEventListener('click', () => exportTable(cfg, 'xlsx'));
+}
+
+function exportTable(cfg, format) {
+  const cols = cfg.listColumns;
+  const rows = getVisibleRows(cfg);
+  const headers = cols.map(c => colLabel(cfg, c));
+  const data = rows.map(r => cols.map(c => {
+    const v = r[c];
+    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    if (c === 'created_at' && v) return new Date(v).toLocaleString('en-IN');
+    return v ?? '';
+  }));
+  const filename = `${State.view}-${new Date().toISOString().slice(0,10)}`;
+
+  if (format === 'csv') {
+    const escCsv = (v) => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [headers, ...data].map(row => row.map(escCsv).join(',')).join('\r\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    downloadBlob(blob, `${filename}.csv`);
+  } else {
+    if (typeof XLSX === 'undefined') { toast('Excel export library did not load.', 'error'); return; }
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, cfg.label.slice(0, 31));
+    XLSX.writeFile(wb, `${filename}.xlsx`);
+  }
+  toast(`Exported ${rows.length} row${rows.length === 1 ? '' : 's'}.`);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function colLabel(cfg, key) {
@@ -227,25 +344,26 @@ function renderCell(cfg, key, row) {
   const val = row[key];
   if (key === 'status' && cfg.statusEditable) {
     const opts = cfg.columns.find(c => c.key === 'status').options;
-    return `<select data-status-id="${row.id}">${opts.map(o => `<option value="${o.value}" ${o.value===val?'selected':''}>${o.label}</option>`).join('')}</select>`;
+    return `<select data-status-id="${row.id}" class="admin-pill-select admin-pill-select--${val}">${opts.map(o => `<option value="${o.value}" ${o.value===val?'selected':''}>${o.label}</option>`).join('')}</select>`;
   }
-  if (key === 'created_at' && val) return new Date(val).toLocaleString('en-IN');
-  if (typeof val === 'boolean') return `<span class="admin-pill admin-pill--${val ? 'yes' : 'no'}">${val ? 'Yes' : 'No'}</span>`;
-  if (key === 'approved' && cfg.reviewModeration) return `<span class="admin-pill admin-pill--${val ? 'yes' : 'no'}">${val ? 'Approved' : 'Pending'}</span>`;
-  if (val && typeof val === 'string' && val.length > 70) return esc(val.slice(0, 70)) + '…';
+  if (key === 'created_at' && val) return new Date(val).toLocaleString('en-IN', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  if (typeof val === 'boolean') return `<span class="admin-pill admin-pill--${val ? 'yes' : 'no'}">${val ? '✓ Yes' : '✕ No'}</span>`;
+  if (key === 'approved' && cfg.reviewModeration) return `<span class="admin-pill admin-pill--${val ? 'yes' : 'no'}">${val ? '✓ Approved' : '⏳ Pending'}</span>`;
+  if (key === 'rating' && typeof val === 'number') return '★'.repeat(val) + '☆'.repeat(Math.max(0, 5 - val));
+  if (val && typeof val === 'string' && val.length > 70) return `<span title="${esc(val)}">${esc(val.slice(0, 70))}…</span>`;
   return esc(val ?? '—');
 }
 
 function renderRowActions(cfg, row) {
   if (cfg.reviewModeration) {
     return `
-      ${!row.approved ? `<button class="admin-btn-sm" data-act="approve" data-id="${row.id}">Approve</button>` : `<button class="admin-btn-sm" data-act="unapprove" data-id="${row.id}">Unapprove</button>`}
+      ${!row.approved ? `<button class="admin-btn-sm admin-btn-sm--primary" data-act="approve" data-id="${row.id}">✓ Approve</button>` : `<button class="admin-btn-sm" data-act="unapprove" data-id="${row.id}">Unapprove</button>`}
       <button class="admin-btn-sm admin-btn-sm--danger" data-act="delete" data-id="${row.id}">Delete</button>`;
   }
   let html = '';
   if (!cfg.readOnly) {
-    html += `<button class="admin-btn-sm" data-act="edit" data-id="${row.id}">Edit</button>`;
-    html += `<button class="admin-btn-sm admin-btn-sm--danger" data-act="delete" data-id="${row.id}">Delete</button>`;
+    html += `<button class="admin-btn-sm" data-act="edit" data-id="${row.id}">✎ Edit</button>`;
+    html += `<button class="admin-btn-sm admin-btn-sm--danger" data-act="delete" data-id="${row.id}">🗑</button>`;
   }
   (cfg.rowActions || []).forEach(a => {
     html += `<button class="admin-btn-sm" data-act="${a.fn}" data-id="${row.id}">${a.label}</button>`;

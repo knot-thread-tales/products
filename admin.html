@@ -27,20 +27,22 @@
 
   <!-- ── Dashboard ─────────────────────────────── -->
   <div id="dashboard" class="admin-dash" hidden>
+    <button id="menuToggle" class="admin-menu-toggle" aria-label="Toggle menu">☰</button>
     <aside class="admin-sidebar">
       <div class="admin-sidebar__brand">🧶 KTT Admin</div>
       <nav id="adminNav" class="admin-sidebar__nav">
-        <button data-view="products" class="admin-nav-btn active">📦 Products</button>
-        <button data-view="announcements" class="admin-nav-btn">📣 Announcements</button>
-        <button data-view="orders" class="admin-nav-btn">🧾 Orders</button>
-        <button data-view="reviews" class="admin-nav-btn">⭐ Reviews</button>
-        <button data-view="categories" class="admin-nav-btn">🗂️ Categories</button>
-        <button data-view="faqs" class="admin-nav-btn">❓ FAQs</button>
-        <button data-view="testimonials" class="admin-nav-btn">💬 Testimonials</button>
-        <button data-view="payment_settings" class="admin-nav-btn">💳 Payment Settings</button>
+        <button data-view="products" class="admin-nav-btn active"><span>📦</span> Products</button>
+        <button data-view="announcements" class="admin-nav-btn"><span>📣</span> Announcements</button>
+        <button data-view="orders" class="admin-nav-btn"><span>🧾</span> Orders</button>
+        <button data-view="reviews" class="admin-nav-btn"><span>⭐</span> Reviews</button>
+        <button data-view="categories" class="admin-nav-btn"><span>🗂️</span> Categories</button>
+        <button data-view="faqs" class="admin-nav-btn"><span>❓</span> FAQs</button>
+        <button data-view="testimonials" class="admin-nav-btn"><span>💬</span> Testimonials</button>
+        <button data-view="payment_settings" class="admin-nav-btn"><span>💳</span> Payment Settings</button>
       </nav>
-      <button id="logoutBtn" class="admin-sidebar__logout">Sign Out</button>
+      <button id="logoutBtn" class="admin-sidebar__logout">⏻ Sign Out</button>
     </aside>
+    <div id="sidebarBackdrop" class="admin-sidebar-backdrop"></div>
 
     <main class="admin-main">
       <header class="admin-main__header">
@@ -83,6 +85,7 @@
   <div id="adminToastHost"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="config.js"></script>
   <script src="admin.js"></script>
 </body>
