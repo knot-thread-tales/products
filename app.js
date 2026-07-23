@@ -22,75 +22,35 @@ const cache = (() => {
   };
 })();
 
-// ─── Image Handler (Google Drive + Supabase Storage + any URL) ─
-// Google Drive's hotlink endpoints (drive.google.com/thumbnail,
-// /uc?export=view, etc.) are undocumented, unsupported, and fail
-// intermittently with 403s / rate limits — this is a known, widely
-// reported Google-side issue, not something fixable in our code.
-// To stay resilient we try several URL formats in order and fall
-// back to a placeholder only if every candidate fails. Non-Drive
-// URLs (e.g. Supabase Storage public URLs) pass straight through.
-const PLACEHOLDER_IMG = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Crect fill='%23f0e6d9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' font-size='56' text-anchor='middle' dominant-baseline='middle'%3E%F0%9F%A7%B5%3C/text%3E%3C/svg%3E`;
-
-function driveFileId(url) {
-  if (!url) return null;
-  const m = url.match(/\/d\/([a-zA-Z0-9_-]{20,})/) || url.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
-  return m ? m[1] : null;
-}
-
-// Ordered list of candidate URLs to try for a given source url + size.
-function imgCandidates(url, size = 800) {
-  if (!url) return [];
-  const id = driveFileId(url);
-  if (!id) {
-    // Not a Drive link (Supabase Storage, Cloudinary, any direct URL) — use as-is.
-    return url.startsWith('http') ? [url] : [];
-  }
-  // lh3.googleusercontent.com tends to be the most hotlink-reliable Drive
-  // format; thumbnail and uc?export=view are kept as fallbacks since
-  // Google has changed/broken these endpoints before without notice.
-  return [
-    `https://lh3.googleusercontent.com/d/${id}=w${size}`,
-    `https://drive.google.com/thumbnail?id=${id}&sz=w${size}`,
-    `https://drive.google.com/uc?export=view&id=${id}`,
-  ];
-}
-
-// Returns the first candidate URL to put in src=, or the placeholder.
+// ─── Google Drive Image Handler ───────────────────────────────
+// Accepts: full Google Drive share URL, direct URL, or empty
 function driveImg(url) {
-  const c = imgCandidates(url, 800);
-  return c.length ? c[0] : PLACEHOLDER_IMG;
-}
+  const placeholder = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Crect fill='%23f0e6d9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' font-size='56' text-anchor='middle' dominant-baseline='middle'%3E%F0%9F%A7%B5%3C/text%3E%3C/svg%3E`;
+  if (!url) return placeholder;
 
-function driveThumb(url) {
-  const c = imgCandidates(url, 480);
-  return c.length ? c[0] : PLACEHOLDER_IMG;
-}
+  // Already a thumbnail URL — pass through
+  if (url.includes('drive.google.com/thumbnail')) return url;
 
-// Called from onerror="" on every product image. Recomputes the
-// candidate list from the original raw URL (stored in data-raw) and
-// steps to the next one; only shows the placeholder once every
-// candidate has failed.
-function handleImgFallback(img) {
-  const raw = img.dataset.raw || '';
-  const size = img.dataset.size || '800';
-  const candidates = imgCandidates(raw, Number(size));
-  let step = parseInt(img.dataset.fbstep || '0', 10) + 1;
-  if (step < candidates.length) {
-    img.dataset.fbstep = String(step);
-    img.src = candidates[step];
-  } else {
-    img.onerror = null;
-    img.src = PLACEHOLDER_IMG;
+  // Convert share/view URL → thumbnail (works without login for public files)
+  const idMatch = url.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  if (idMatch) {
+    return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800`;
   }
-}
-window.handleImgFallback = handleImgFallback;
 
-// Common attributes every product <img> needs so the fallback chain
-// above can do its job: raw source url + size + a fresh error handler
-// (instead of the old one-shot `this.src = placeholder`).
-function imgAttrs(url, size = 800) {
-  return `data-raw="${esc(url || '')}" data-size="${size}" data-fbstep="0" onerror="handleImgFallback(this)"`;
+  // Anything else (external URL, placeholder text) — pass through / use placeholder
+  if (url.startsWith('http')) return url;
+  return placeholder;
+}
+
+// Thumbnail variant for cards (smaller)
+function driveThumb(url) {
+  if (!url) return driveImg(url);
+  const idMatch = url.match(/\/d\/([a-zA-Z0-9_-]{20,})/) ||
+                  url.match(/id=([a-zA-Z0-9_-]{20,})/);
+  if (idMatch) {
+    return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w480`;
+  }
+  return url.startsWith('http') ? url : driveImg(url);
 }
 
 // ─── Supabase REST Client ─────────────────────────────────────
@@ -108,25 +68,27 @@ const db = (() => {
     if (params.filter) {
       Object.entries(params.filter).forEach(([k, v]) => url.searchParams.set(k, v));
     }
-    if (params.or) url.searchParams.set('or', params.or);
     if (params.order) url.searchParams.set('order', params.order);
     if (params.limit !== undefined) url.searchParams.set('limit', params.limit);
     if (params.offset !== undefined) url.searchParams.set('offset', params.offset);
 
     const cacheKey = url.toString();
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
+    const cacheable = table !== 'products' && table !== 'product_images';
+    if (cacheable) {
+      const cached = cache.get(cacheKey);
+      if (cached) return cached;
+    }
 
     const res = await fetch(url.toString(), { headers });
     if (!res.ok) throw new Error(`DB ${res.status} on ${table}`);
     const data = await res.json();
-    cache.set(cacheKey, data);
+    if (cacheable) cache.set(cacheKey, data);
     return data;
   }
 
   function makeQuery(table) {
     const q = {
-      _table: table, _select: '*', _filter: {}, _or: null,
+      _table: table, _select: '*', _filter: {},
       _order: null, _limit: null, _offset: null,
 
       select(cols) { this._select = cols; return this; },
@@ -136,28 +98,13 @@ const db = (() => {
       gte(col, val) { this._filter[col] = `gte.${val}`; return this; },
       lte(col, val) { this._filter[col] = `lte.${val}`; return this; },
       in(col, vals) { this._filter[col] = `in.(${vals.join(',')})`; return this; },
-      // Raw PostgREST `or=(...)` expression, e.g.
-      // "name.ilike.%foo%,product_code.ilike.%foo%"
-      or(expr) { this._or = expr; return this; },
-      // Accumulates — calling .order() more than once appends a
-      // secondary/tertiary sort key instead of overwriting the first.
-      // This matters: without a deterministic tiebreaker, rows that
-      // share the same sort value (e.g. several products seeded with
-      // an identical created_at timestamp) can be ordered differently
-      // between paginated requests, causing them to silently vanish
-      // from a page or duplicate across pages.
-      order(col, { ascending = true } = {}) {
-        const clause = `${col}.${ascending ? 'asc' : 'desc'}`;
-        this._order = this._order ? `${this._order},${clause}` : clause;
-        return this;
-      },
+      order(col, { ascending = true } = {}) { this._order = `${col}.${ascending ? 'asc' : 'desc'}`; return this; },
       limit(n) { this._limit = n; return this; },
       range(from, to) { this._offset = from; this._limit = to - from + 1; return this; },
       execute() {
         return query(this._table, {
           select: this._select,
           filter: this._filter,
-          or: this._or,
           order: this._order,
           limit: this._limit,
           offset: this._offset,
@@ -167,28 +114,17 @@ const db = (() => {
     return q;
   }
 
-  async function insertRow(table, payload) {
-    const res = await fetch(`${base}/${table}`, {
-      method: 'POST',
-      headers: { ...headers, Prefer: 'return=representation' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`DB insert ${res.status} on ${table}: ${body}`);
-    }
-    cache.clear(); // writes can change results of already-cached reads
-    const data = await res.json().catch(() => []);
-    return Array.isArray(data) ? data[0] : data;
-  }
-
-  return {
-    from: (t) => ({
-      select: (c = '*') => makeQuery(t).select(c),
-      insert: (payload) => insertRow(t, payload),
-    }),
-  };
+  return { from: (t) => ({ select: (c = '*') => makeQuery(t).select(c) }) };
 })();
+
+// ─── Supabase Auth Client (Google Sign-In) ─────────────────────
+// This is separate from the lightweight `db` REST wrapper above, which
+// stays anon-key-only and read-only. The official supabase-js client
+// (loaded via CDN in index.html) is used only for: (1) OAuth session
+// handling, and (2) authenticated reads/writes that need RLS's
+// auth.uid() — i.e. a signed-in customer's own orders. No secret keys
+// are ever used client-side.
+const sb = window.supabase.createClient(CONFIG.supabase.url, CONFIG.supabase.anonKey);
 
 // ─── Image Attachment Helper ──────────────────────────────────
 // Products no longer carry a main_image column — all images live
@@ -262,8 +198,12 @@ const State = {
   businessSettings: null,
   paymentSettings: null,
   currentProduct: null,
+  user: null,
+  session: null,
+  isAdmin: false,
   searchQuery: '',
   filterCategory: null,
+  filterBestsellerOnly: false,
   filterPriceMin: null,
   filterPriceMax: null,
   sortBy: 'created_at',
@@ -418,7 +358,8 @@ function buildGallery(images, container) {
           ${urls.map((u, i) => `
             <div class="slider__slide" data-idx="${i}">
               <img src="${driveImg(u)}" alt="Product image ${i + 1}" class="slider__img"
-                   loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async" ${imgAttrs(u, 800)}>
+                   loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async"
+                   onerror="this.src='${driveImg('')}'">
             </div>`).join('')}
         </div>
         ${urls.length > 1 ? `
@@ -443,7 +384,7 @@ function buildGallery(images, container) {
       <div class="slider__thumbs" id="sliderThumbs">
         ${urls.map((u, i) => `
           <button class="thumb-item${i===0?' active':''}" data-idx="${i}" aria-label="Image ${i+1}">
-            <img src="${driveThumb(u)}" alt="Thumb ${i+1}" loading="lazy" ${imgAttrs(u, 480)}>
+            <img src="${driveThumb(u)}" alt="Thumb ${i+1}" loading="lazy" onerror="this.src='${driveImg('')}'">
           </button>`).join('')}
       </div>` : ''}
     </div>`;
@@ -626,13 +567,14 @@ function productCard(p) {
       <div class="product-card__img-wrap${multi ? ' has-multi' : ''}">
         ${multi ? `
         <div class="card-mini-slider" data-idx="0">
-          ${imgs.map((u, i) => `<img src="${driveThumb(u)}" alt="${esc(p.name)} photo ${i+1}" class="card-mini-slider__img${i===0?' active':''}" loading="lazy" decoding="async" data-idx="${i}" ${imgAttrs(u, 480)}>`).join('')}
+          ${imgs.map((u, i) => `<img src="${driveThumb(u)}" alt="${esc(p.name)} photo ${i+1}" class="card-mini-slider__img${i===0?' active':''}" loading="lazy" decoding="async" data-idx="${i}" onerror="this.src='${driveImg('')}'">`).join('')}
         </div>
         <div class="card-mini-dots">
           ${imgs.map((_, i) => `<span class="card-mini-dot${i===0?' active':''}"></span>`).join('')}
         </div>
         <span class="badge-image-count">📷 ${imgs.length}</span>` : `
-        <img src="${driveThumb(imgs[0] || '')}" alt="${esc(p.name)}" class="product-card__img" loading="lazy" decoding="async" ${imgAttrs(imgs[0] || '', 480)}>`}
+        <img src="${driveThumb(imgs[0] || '')}" alt="${esc(p.name)}" class="product-card__img" loading="lazy" decoding="async"
+             onerror="this.src='${driveImg('')}'">`}
         <div class="product-card__badges">
           <span class="badge badge--handmade">Handmade</span>
           ${p.is_bestseller ? '<span class="badge badge--bestseller">⭐ Bestseller</span>' : ''}
@@ -709,9 +651,10 @@ async function submitOrder(e) {
   const phone   = form.customerPhone.value.trim();
   const address = form.customerAddress.value.trim();
   const pincode = form.customerPincode.value.trim();
-  const qty     = form.customerQty.value.trim();
+  const qty     = Number(form.customerQty.value.trim()) || 1;
   const notes   = form.customizationNotes.value.trim();
-  const unitPrice = Number(p.offer_price || p.price);
+  const unitPrice = p.offer_price || p.price;
+  const amount  = unitPrice * qty;
   const display = formatPrice(unitPrice);
 
   const msg = encodeURIComponent(
@@ -737,37 +680,36 @@ ${notes || 'None'}
 Please confirm availability and payment instructions. 🙏`
   );
 
+  // Save to order history if the customer is signed in (guest checkout still
+  // works via WhatsApp alone — this just adds order tracking on top).
+  if (State.user) {
+    try {
+      await sb.from('orders').insert({
+        user_id: State.user.id,
+        product_id: p.id,
+        product_name: p.name,
+        product_code: p.product_code || 'KTT-' + p.id,
+        qty, unit_price: unitPrice, total_amount: amount,
+        customer_name: name, customer_phone: phone,
+        customer_address: address, customer_pincode: pincode,
+        customization_notes: notes,
+        order_status: 'pending', payment_status: 'pending',
+      });
+    } catch { /* non-fatal — WhatsApp order still proceeds */ }
+  }
+
   closeModal('orderModal');
   fireConfetti();
   showToast('Order sent! Opening WhatsApp… 🎉');
 
-  // Best-effort save to the orders table — WhatsApp remains the source
-  // of truth for fulfilment, but this gives an in-dashboard order log
-  // even if the customer never actually sends the WhatsApp message.
-  try {
-    await db.from('orders').insert({
-      product_id: p.id,
-      product_code: p.product_code || null,
-      product_name: p.name,
-      unit_price: unitPrice,
-      quantity: Number(qty) || 1,
-      customer_name: name,
-      customer_phone: phone,
-      customer_address: address,
-      customer_pincode: pincode,
-      customization_notes: notes || null,
-      status: 'pending',
-    });
-  } catch { /* order still proceeds via WhatsApp even if logging fails */ }
-
   setTimeout(() => {
-    openPaymentModal();
+    openPaymentModal(amount);
     window.open(`https://wa.me/${CONFIG.whatsapp.number}?text=${msg}`, '_blank');
   }, 700);
 }
 
 // ─── Payment Modal ────────────────────────────────────────────
-async function openPaymentModal() {
+async function openPaymentModal(amount) {
   let ps = State.paymentSettings;
   if (!ps) {
     try {
@@ -783,19 +725,22 @@ async function openPaymentModal() {
   if (!m) return;
   m.querySelector('.payment-upi-id').textContent = ps.upi_id;
   m.querySelector('.payment-merchant').textContent = ps.merchant_name;
+
+  const amtEl = m.querySelector('.payment-amount-due');
+  if (amtEl) amtEl.textContent = amount ? `Amount Due: ${formatPrice(amount)}` : '';
+
+  const amtParam = amount ? `&am=${encodeURIComponent(amount)}` : '';
+  const upiUri = `upi://pay?pa=${encodeURIComponent(ps.upi_id)}&pn=${encodeURIComponent(ps.merchant_name)}${amtParam}&cu=INR&tn=${encodeURIComponent('Knot & Thread Tales order')}`;
+
   const qrImg = m.querySelector('.payment-qr');
   if (qrImg) {
-    if (ps.qr_image) {
-      qrImg.dataset.raw = ps.qr_image;
-      qrImg.dataset.size = '800';
-      qrImg.dataset.fbstep = '0';
-      qrImg.onerror = () => handleImgFallback(qrImg);
-      qrImg.src = driveImg(ps.qr_image);
-    } else {
-      qrImg.onerror = null;
-      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=upi://pay?pa=${encodeURIComponent(ps.upi_id)}&pn=${encodeURIComponent(ps.merchant_name)}`;
-    }
+    qrImg.src = ps.qr_image
+      ? driveImg(ps.qr_image)
+      : `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiUri)}`;
   }
+  const payBtn = m.querySelector('#upiPayNowBtn');
+  if (payBtn) payBtn.href = upiUri;
+
   openModal('paymentModal');
 }
 
@@ -842,39 +787,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $$('.modal--open').forEach(m => closeModal(m.id));
 });
 
-// ─── Announcements Bar (discounts, site-wide notices) ─────────
-async function renderAnnouncementBar() {
-  const bar = document.getElementById('announcementBar');
-  if (!bar) return;
-  try {
-    const items = await db.from('announcements').select('*').eq('is_active', true).order('sort_order').order('id').execute();
-    const now = new Date();
-    const live = items.filter(a => {
-      if (a.starts_at && new Date(a.starts_at) > now) return false;
-      if (a.ends_at && new Date(a.ends_at) < now) return false;
-      const dismissed = sessionStorage.getItem(`ktt_ann_dismissed_${a.id}`);
-      return !dismissed;
-    });
-    if (!live.length) { bar.hidden = true; bar.innerHTML = ''; return; }
-
-    bar.hidden = false;
-    bar.innerHTML = live.map(a => `
-      <div class="announce-bar__item announce-bar__item--${esc(a.type || 'info')}" data-id="${a.id}">
-        <span class="announce-bar__text">${a.emoji ? esc(a.emoji) + ' ' : ''}${esc(a.message)}</span>
-        ${a.link_url ? `<a href="${esc(a.link_url)}" class="announce-bar__link">${esc(a.link_text || 'Shop now')} →</a>` : ''}
-        <button class="announce-bar__close" aria-label="Dismiss announcement" data-id="${a.id}">&times;</button>
-      </div>`).join('');
-
-    bar.querySelectorAll('.announce-bar__close').forEach(btn => {
-      btn.addEventListener('click', () => {
-        sessionStorage.setItem(`ktt_ann_dismissed_${btn.dataset.id}`, '1');
-        btn.closest('.announce-bar__item')?.remove();
-        if (!bar.querySelector('.announce-bar__item')) bar.hidden = true;
-      });
-    });
-  } catch { bar.hidden = true; }
-}
-
 // ─── App Init ─────────────────────────────────────────────────
 async function initApp() {
   try {
@@ -887,10 +799,13 @@ async function initApp() {
   } catch { State.businessSettings = null; }
 
   renderNav();
-  renderAnnouncementBar();
+  await initAuth();
 
   Router.on('/', renderHome);
   Router.on('/products', renderProductsPage);
+  Router.on('/best-sellers', renderBestSellersPage);
+  Router.on('/my-orders', renderMyOrdersPage);
+  Router.on('/admin', renderAdminPage);
   Router.on('/search', renderSearchPage);
   Router.on('/about', renderAboutPage);
   Router.on('/faq', renderFaqPage);
@@ -912,6 +827,10 @@ async function initApp() {
 }
 
 function globalClickHandler(e) {
+  if (!e.target.closest('.auth-user')) {
+    $$('.auth-user.is-open').forEach(el => el.classList.remove('is-open'));
+  }
+
   const orderBtn = e.target.closest('.product-card__order, .btn--order');
   if (orderBtn && !orderBtn.disabled) { handleOrderClick(orderBtn.dataset.id); return; }
 
@@ -927,6 +846,524 @@ function globalClickHandler(e) {
   const navLink = e.target.closest('[data-route]');
   if (navLink) { e.preventDefault(); Router.navigate(navLink.dataset.route); closeMobileMenu(); return; }
 }
+
+// ─── Auth (Google Sign-In via Supabase) ────────────────────────
+async function initAuth() {
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    State.session = session;
+    State.user = session?.user || null;
+  } catch { State.session = null; State.user = null; }
+  await refreshAdminStatus();
+  renderAuthWidget();
+
+  sb.auth.onAuthStateChange(async (_event, session) => {
+    State.session = session;
+    State.user = session?.user || null;
+    await refreshAdminStatus();
+    renderAuthWidget();
+    if (Router.current() === '/my-orders') renderMyOrdersPage();
+    if (Router.current() === '/admin') renderAdminPage();
+  });
+}
+
+async function refreshAdminStatus() {
+  if (!State.user) { State.isAdmin = false; return; }
+  try {
+    const { data } = await sb.from('admin_users').select('user_id').eq('user_id', State.user.id).maybeSingle();
+    State.isAdmin = !!data;
+  } catch { State.isAdmin = false; }
+}
+
+window.signInWithGoogle = () => {
+  sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin + window.location.pathname },
+  });
+};
+
+window.signOut = async () => {
+  await sb.auth.signOut();
+  State.user = null; State.session = null;
+  renderAuthWidget();
+  showToast('Signed out 👋');
+  Router.navigate('/');
+};
+
+function renderAuthWidget() {
+  const targets = [document.getElementById('authWidget'), document.getElementById('authWidgetMobile')];
+  const user = State.user;
+  let html;
+  if (user) {
+    const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'Account';
+    const avatar = user.user_metadata?.avatar_url || user.user_metadata?.picture;
+    const initial = name.charAt(0).toUpperCase();
+    html = `
+      <div class="auth-user" onclick="this.classList.toggle('is-open')">
+        ${avatar ? `<img class="auth-user__avatar" src="${esc(avatar)}" alt="">` : `<span class="auth-user__avatar">${initial}</span>`}
+        <span class="auth-user__name">${esc(name)}</span>
+        <div class="auth-user__menu">
+          <a href="#/my-orders" data-route="/my-orders">📦 My Orders</a>
+          ${State.isAdmin ? `<a href="#/admin" data-route="/admin">🛠 Admin Panel</a>` : ''}
+          <button type="button" onclick="event.stopPropagation();signOut()">🚪 Sign Out</button>
+        </div>
+      </div>`;
+  } else {
+    html = `<button class="btn btn--sm btn--outline" onclick="signInWithGoogle()">Sign in</button>`;
+  }
+  targets.forEach(t => { if (t) t.innerHTML = html; });
+}
+
+// ─── Page: My Orders ────────────────────────────────────────────
+async function renderMyOrdersPage() {
+  setPage('my-orders-page');
+  const signedOutMsg = document.getElementById('myOrdersSignedOut');
+  const list = document.getElementById('myOrdersList');
+  if (!list) return;
+
+  if (!State.user) {
+    if (signedOutMsg) signedOutMsg.hidden = false;
+    list.innerHTML = '';
+    return;
+  }
+  if (signedOutMsg) signedOutMsg.hidden = true;
+
+  list.innerHTML = skeleton(3);
+  try {
+    const { data, error } = await sb.from('orders').select('*')
+      .eq('user_id', State.user.id).order('created_at', { ascending: false });
+    if (error) throw error;
+    list.innerHTML = data.length
+      ? data.map(orderCard).join('')
+      : '<p class="empty-msg">No orders yet — once you place an order it\'ll show up here.</p>';
+  } catch {
+    list.innerHTML = '<p class="empty-msg">Could not load your orders. Please try again shortly.</p>';
+  }
+}
+
+function orderCard(o) {
+  const status = (o.order_status || 'pending').toLowerCase();
+  const label = status.charAt(0).toUpperCase() + status.slice(1);
+  const date = o.created_at
+    ? new Date(o.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : '';
+  return `
+    <div class="order-card">
+      <div class="order-card__info">
+        <h3>${esc(o.product_name)}${o.qty > 1 ? ` × ${o.qty}` : ''}</h3>
+        <p>${esc(o.product_code || '')} · Ordered ${esc(date)}</p>
+      </div>
+      <div class="order-card__meta">
+        <p class="order-card__price">${formatPrice(o.total_amount)}</p>
+        <span class="order-status order-status--${esc(status)}">${esc(label)}</span>
+      </div>
+    </div>`;
+}
+
+// ─── Admin Panel ────────────────────────────────────────────────
+const ADMIN_TABS = [
+  { id: 'products',   label: '🧶 Products',   render: renderAdminProducts },
+  { id: 'orders',     label: '📦 Orders',      render: renderAdminOrders },
+  { id: 'categories', label: '🗂 Categories',  render: () => renderGenericAdmin('categories', { title: 'Categories', orderBy: 'name' }) },
+  { id: 'reviews',    label: '⭐ Reviews',     render: () => renderGenericAdmin('reviews', { title: 'Reviews', orderBy: 'created_at', orderDesc: true }) },
+  { id: 'featured',   label: '✨ Featured',    render: () => renderGenericAdmin('featured_products', { title: 'Featured Products', orderBy: 'sort_order' }) },
+  { id: 'faqs',       label: '❓ FAQs',        render: () => renderGenericAdmin('faqs', { title: 'FAQs', orderBy: 'sort_order' }) },
+  { id: 'testimonials', label: '💬 Testimonials', render: () => renderGenericAdmin('testimonials', { title: 'Testimonials', orderBy: 'sort_order' }) },
+  { id: 'payment',    label: '💳 Payment Settings', render: () => renderGenericAdmin('payment_settings', { title: 'Payment Settings', singleton: true }) },
+  { id: 'business',   label: '🏢 Business Settings', render: () => renderGenericAdmin('business_settings', { title: 'Business Settings', singleton: true }) },
+];
+let currentAdminTab = 'products';
+
+async function renderAdminPage() {
+  setPage('admin-page');
+  const restricted = document.getElementById('adminRestricted');
+  const shell = document.getElementById('adminShell');
+  if (!State.user || !State.isAdmin) {
+    restricted.hidden = false;
+    shell.hidden = true;
+    return;
+  }
+  restricted.hidden = true;
+  shell.hidden = false;
+  renderAdminTabs();
+  await switchAdminTab(currentAdminTab);
+}
+
+function renderAdminTabs() {
+  const nav = document.getElementById('adminTabs');
+  nav.innerHTML = ADMIN_TABS.map(t =>
+    `<button class="admin-tab ${t.id === currentAdminTab ? 'is-active' : ''}" data-admin-tab="${t.id}">${t.label}</button>`
+  ).join('');
+  nav.onclick = (e) => {
+    const btn = e.target.closest('[data-admin-tab]');
+    if (btn) switchAdminTab(btn.dataset.adminTab);
+  };
+}
+
+async function switchAdminTab(id) {
+  currentAdminTab = id;
+  renderAdminTabs();
+  const content = document.getElementById('adminContent');
+  content.innerHTML = skeleton(2);
+  const tab = ADMIN_TABS.find(t => t.id === id);
+  if (tab) await tab.render();
+}
+
+// ─── Generic dynamic-schema CRUD (categories, faqs, testimonials,
+//     featured_products, reviews, payment_settings, business_settings) ───
+// Field list is detected from the first row returned, rather than
+// hardcoded — keeps this working even if the exact columns differ from
+// what's assumed elsewhere, and adapts automatically if columns are
+// added later in Supabase.
+const READONLY_FIELDS = ['id', 'created_at', 'updated_at'];
+
+async function renderGenericAdmin(table, opts) {
+  const content = document.getElementById('adminContent');
+  let rows;
+  try {
+    let q = sb.from(table).select('*');
+    if (opts.orderBy) q = q.order(opts.orderBy, { ascending: !opts.orderDesc });
+    const { data, error } = await q;
+    if (error) throw error;
+    rows = data || [];
+  } catch (err) {
+    content.innerHTML = `<p class="admin-empty">Couldn't load ${esc(opts.title)}: ${esc(err.message || 'unknown error')}</p>`;
+    return;
+  }
+
+  const fields = rows.length ? Object.keys(rows[0]).filter(k => !READONLY_FIELDS.includes(k)) : [];
+
+  content.innerHTML = `
+    <div class="admin-toolbar">
+      <h2>${esc(opts.title)}</h2>
+      ${(!opts.singleton || rows.length === 0) ? `<button class="btn btn--sm btn--primary" onclick="openGenericForm('${table}', null, ${JSON.stringify(fields).replace(/"/g, '&quot;')})">+ Add New</button>` : ''}
+    </div>
+    <div id="genericFormSlot"></div>
+    ${rows.length ? `
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr>${fields.slice(0, 5).map(f => `<th>${esc(f)}</th>`).join('')}<th>Actions</th></tr></thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                ${fields.slice(0, 5).map(f => `<td class="wrap">${esc(formatCellValue(r[f]))}</td>`).join('')}
+                <td class="admin-row-actions">
+                  <button onclick='openGenericForm(${JSON.stringify(table)}, ${JSON.stringify(r).replace(/'/g, "&#39;")}, ${JSON.stringify(fields)})'>Edit</button>
+                  <button class="danger" onclick="deleteGenericRow('${table}', '${r.id}')">Delete</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="admin-empty">No rows yet — click "Add New" to create the first one.</p>`}
+  `;
+}
+
+function formatCellValue(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? '✅' : '—';
+  const s = String(v);
+  return s.length > 60 ? s.slice(0, 60) + '…' : s;
+}
+
+window.openGenericForm = (table, row, fields) => {
+  const slot = document.getElementById('genericFormSlot');
+  const data = row || {};
+  slot.innerHTML = `
+    <div class="admin-form-card">
+      <h3>${row ? 'Edit' : 'Add'} ${esc(table)}</h3>
+      <div class="form-row" style="grid-template-columns:1fr 1fr;">
+        ${fields.map(f => {
+          const val = data[f];
+          if (typeof val === 'boolean' || /^(is_|active$)/.test(f)) {
+            return `<div class="form-group"><label><input type="checkbox" id="gf_${f}" ${val ? 'checked' : ''}> ${esc(f)}</label></div>`;
+          }
+          const long = typeof val === 'string' && val.length > 60 || /description|answer|text|notes|address/.test(f);
+          return `<div class="form-group"><label for="gf_${f}">${esc(f)}</label>${
+            long
+              ? `<textarea id="gf_${f}">${esc(val ?? '')}</textarea>`
+              : `<input type="${typeof val === 'number' ? 'number' : 'text'}" id="gf_${f}" value="${esc(val ?? '')}">`
+          }</div>`;
+        }).join('')}
+      </div>
+      <div class="admin-row-actions">
+        <button class="btn btn--primary btn--sm" onclick='saveGenericRow(${JSON.stringify(table)}, ${row ? `"${row.id}"` : 'null'}, ${JSON.stringify(fields)})'>Save</button>
+        <button class="btn btn--outline btn--sm" onclick="document.getElementById('genericFormSlot').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+};
+
+window.saveGenericRow = async (table, id, fields) => {
+  const payload = {};
+  fields.forEach(f => {
+    const el = document.getElementById(`gf_${f}`);
+    if (!el) return;
+    payload[f] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? Number(el.value) : el.value);
+  });
+  try {
+    const { error } = id
+      ? await sb.from(table).update(payload).eq('id', id)
+      : await sb.from(table).insert(payload);
+    if (error) throw error;
+    cache.clear();
+    showToast('Saved ✅');
+    const tab = ADMIN_TABS.find(t => t.id === currentAdminTab);
+    if (tab) await tab.render();
+  } catch (err) {
+    showToast(err.message || 'Save failed', 'error');
+  }
+};
+
+window.deleteGenericRow = async (table, id) => {
+  if (!confirm('Delete this row? This cannot be undone.')) return;
+  try {
+    const { error } = await sb.from(table).delete().eq('id', id);
+    if (error) throw error;
+    cache.clear();
+    showToast('Deleted');
+    const tab = ADMIN_TABS.find(t => t.id === currentAdminTab);
+    if (tab) await tab.render();
+  } catch (err) {
+    showToast(err.message || 'Delete failed', 'error');
+  }
+};
+
+// ─── Products admin (dedicated — most important table) ─────────
+async function renderAdminProducts() {
+  const content = document.getElementById('adminContent');
+  let products;
+  try {
+    const { data, error } = await sb.from('products').select('*').order('name');
+    if (error) throw error;
+    products = data || [];
+  } catch (err) {
+    content.innerHTML = `<p class="admin-empty">Couldn't load products: ${esc(err.message)}</p>`;
+    return;
+  }
+
+  content.innerHTML = `
+    <div class="admin-toolbar">
+      <h2>Products (${products.length})</h2>
+      <button class="btn btn--sm btn--primary" onclick="openProductForm()">+ Add Product</button>
+    </div>
+    <div id="productFormSlot"></div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Code</th><th>Name</th><th>Price</th><th>Offer</th><th>Bestseller</th><th>In Stock</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${products.map(p => `
+            <tr>
+              <td>${esc(p.product_code || '')}</td>
+              <td class="wrap">${esc(p.name)}</td>
+              <td>${formatPrice(p.price)}</td>
+              <td>${p.offer_price ? formatPrice(p.offer_price) : '—'}</td>
+              <td>${p.is_bestseller ? '⭐' : '—'}</td>
+              <td>${p.in_stock ? '✅' : '❌'}</td>
+              <td class="admin-row-actions">
+                <button onclick="openProductForm(${p.id})">Edit</button>
+                <button class="danger" onclick="deleteProduct(${p.id})">Delete</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+window.openProductForm = async (id) => {
+  const slot = document.getElementById('productFormSlot');
+  slot.innerHTML = skeleton(1);
+
+  let product = null, images = [];
+  if (id) {
+    const [{ data: p }, { data: imgs }] = await Promise.all([
+      sb.from('products').select('*').eq('id', id).single(),
+      sb.from('product_images').select('*').eq('product_id', id).order('sort_order'),
+    ]);
+    product = p; images = imgs || [];
+  }
+  const d = product || {};
+  const catOptions = State.categories.map(c => `<option value="${c.id}" ${d.category_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+
+  slot.innerHTML = `
+    <div class="admin-form-card">
+      <h3>${id ? 'Edit' : 'Add'} Product</h3>
+      <div class="form-row">
+        <div class="form-group"><label>Product Code</label><input type="text" id="pf_product_code" value="${esc(d.product_code ?? '')}"></div>
+        <div class="form-group"><label>Name</label><input type="text" id="pf_name" value="${esc(d.name ?? '')}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Category</label><select id="pf_category_id"><option value="">— none —</option>${catOptions}</select></div>
+        <div class="form-group"><label>Delivery Days (e.g. 3-5)</label><input type="text" id="pf_delivery_days" value="${esc(d.delivery_days ?? '')}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Price (₹)</label><input type="number" id="pf_price" value="${esc(d.price ?? '')}"></div>
+        <div class="form-group"><label>Offer Price (₹)</label><input type="number" id="pf_offer_price" value="${esc(d.offer_price ?? '')}"></div>
+      </div>
+      <div class="form-group"><label>Description</label><textarea id="pf_description">${esc(d.description ?? '')}</textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label>Materials</label><input type="text" id="pf_materials" value="${esc(d.materials ?? '')}"></div>
+        <div class="form-group"><label>Dimensions</label><input type="text" id="pf_dimensions" value="${esc(d.dimensions ?? '')}"></div>
+      </div>
+      <div class="form-group"><label>Wash Care</label><input type="text" id="pf_wash_care" value="${esc(d.wash_care ?? '')}"></div>
+      <div class="form-row" style="grid-template-columns:repeat(3,auto);gap:24px;">
+        <label><input type="checkbox" id="pf_is_bestseller" ${d.is_bestseller ? 'checked' : ''}> Bestseller</label>
+        <label><input type="checkbox" id="pf_is_customizable" ${d.is_customizable ? 'checked' : ''}> Customizable</label>
+        <label><input type="checkbox" id="pf_in_stock" ${d.in_stock !== false ? 'checked' : ''}> In Stock</label>
+      </div>
+
+      <h3 style="margin-top:20px;">Images</h3>
+      <div id="pfImages">
+        ${images.map(img => productImageRowHtml(img)).join('') || ''}
+      </div>
+      <button type="button" class="btn btn--outline btn--sm" onclick="addProductImageRow()">+ Add Image Row</button>
+
+      <div class="admin-row-actions" style="margin-top:18px;">
+        <button class="btn btn--primary btn--sm" onclick="saveProduct(${id ?? 'null'})">Save Product</button>
+        <button class="btn btn--outline btn--sm" onclick="document.getElementById('productFormSlot').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+};
+
+function productImageRowHtml(img = {}) {
+  const rid = img.id || ('new_' + Math.random().toString(36).slice(2, 8));
+  return `
+    <div class="admin-image-row" data-image-row="${rid}" data-image-id="${img.id ?? ''}">
+      <input type="text" placeholder="Google Drive image URL" class="img-url" value="${esc(img.image_url ?? '')}">
+      <input type="text" placeholder="Alt text" class="img-alt" value="${esc(img.alt_text ?? '')}">
+      <label style="font-size:.78rem;"><input type="checkbox" class="img-primary" ${img.is_primary ? 'checked' : ''}> Primary</label>
+      <input type="number" placeholder="Order" class="img-sort" value="${esc(img.sort_order ?? 1)}">
+      <button type="button" class="icon-btn" onclick="this.closest('[data-image-row]').remove()" title="Remove">✕</button>
+    </div>`;
+}
+
+window.addProductImageRow = () => {
+  document.getElementById('pfImages').insertAdjacentHTML('beforeend', productImageRowHtml());
+};
+
+window.saveProduct = async (id) => {
+  const val = (sel) => document.getElementById(sel)?.value;
+  const payload = {
+    product_code: val('pf_product_code'),
+    name: val('pf_name'),
+    category_id: val('pf_category_id') ? Number(val('pf_category_id')) : null,
+    delivery_days: val('pf_delivery_days'),
+    price: Number(val('pf_price')) || 0,
+    offer_price: val('pf_offer_price') ? Number(val('pf_offer_price')) : null,
+    description: val('pf_description'),
+    materials: val('pf_materials'),
+    dimensions: val('pf_dimensions'),
+    wash_care: val('pf_wash_care'),
+    is_bestseller: document.getElementById('pf_is_bestseller').checked,
+    is_customizable: document.getElementById('pf_is_customizable').checked,
+    in_stock: document.getElementById('pf_in_stock').checked,
+  };
+
+  try {
+    let productId = id;
+    if (id) {
+      const { error } = await sb.from('products').update(payload).eq('id', id);
+      if (error) throw error;
+    } else {
+      const { data, error } = await sb.from('products').insert(payload).select('id').single();
+      if (error) throw error;
+      productId = data.id;
+    }
+
+    // Sync image rows: update existing, insert new, and delete rows removed from the form.
+    const rows = [...document.querySelectorAll('[data-image-row]')];
+    const keepIds = [];
+    for (const row of rows) {
+      const imageId = row.dataset.imageId;
+      const imgPayload = {
+        product_id: productId,
+        image_url: row.querySelector('.img-url').value,
+        alt_text: row.querySelector('.img-alt').value,
+        is_primary: row.querySelector('.img-primary').checked,
+        sort_order: Number(row.querySelector('.img-sort').value) || 1,
+      };
+      if (!imgPayload.image_url) continue;
+      if (imageId) {
+        await sb.from('product_images').update(imgPayload).eq('id', imageId);
+        keepIds.push(imageId);
+      } else {
+        const { data } = await sb.from('product_images').insert(imgPayload).select('id').single();
+        if (data) keepIds.push(String(data.id));
+      }
+    }
+    if (id) {
+      const { data: existing } = await sb.from('product_images').select('id').eq('product_id', productId);
+      const toDelete = (existing || []).filter(r => !keepIds.includes(String(r.id))).map(r => r.id);
+      if (toDelete.length) await sb.from('product_images').delete().in('id', toDelete);
+    }
+
+    showToast('Product saved ✅');
+    cache.clear();
+    document.getElementById('productFormSlot').innerHTML = '';
+    await renderAdminProducts();
+  } catch (err) {
+    showToast(err.message || 'Save failed', 'error');
+  }
+};
+
+window.deleteProduct = async (id) => {
+  if (!confirm('Delete this product and its images? This cannot be undone.')) return;
+  try {
+    await sb.from('product_images').delete().eq('product_id', id);
+    const { error } = await sb.from('products').delete().eq('id', id);
+    if (error) throw error;
+    cache.clear();
+    showToast('Product deleted');
+    await renderAdminProducts();
+  } catch (err) {
+    showToast(err.message || 'Delete failed', 'error');
+  }
+};
+
+// ─── Orders admin (view all, update status) ─────────────────────
+async function renderAdminOrders() {
+  const content = document.getElementById('adminContent');
+  let orders;
+  try {
+    const { data, error } = await sb.from('orders').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    orders = data || [];
+  } catch (err) {
+    content.innerHTML = `<p class="admin-empty">Couldn't load orders: ${esc(err.message)}</p>`;
+    return;
+  }
+
+  const statusOpts = (val, options) => options.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('');
+
+  content.innerHTML = `
+    <div class="admin-toolbar"><h2>Orders (${orders.length})</h2></div>
+    ${orders.length ? `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Date</th><th>Customer</th><th>Product</th><th>Amount</th><th>Order Status</th><th>Payment</th></tr></thead>
+        <tbody>
+          ${orders.map(o => `
+            <tr>
+              <td>${o.created_at ? new Date(o.created_at).toLocaleDateString('en-IN') : ''}</td>
+              <td class="wrap">${esc(o.customer_name)}<br><span style="color:var(--c-text-3);font-size:.78rem;">${esc(o.customer_phone)}</span></td>
+              <td class="wrap">${esc(o.product_name)}${o.qty > 1 ? ` ×${o.qty}` : ''}</td>
+              <td>${formatPrice(o.total_amount)}</td>
+              <td><select onchange="updateOrderField(${o.id}, 'order_status', this.value)">${statusOpts(o.order_status, ['pending','confirmed','shipped','delivered','cancelled'])}</select></td>
+              <td><select onchange="updateOrderField(${o.id}, 'payment_status', this.value)">${statusOpts(o.payment_status, ['pending','paid','failed','refunded'])}</select></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : `<p class="admin-empty">No orders yet.</p>`}`;
+}
+
+window.updateOrderField = async (id, field, value) => {
+  try {
+    const { error } = await sb.from('orders').update({ [field]: value }).eq('id', id);
+    if (error) throw error;
+    cache.clear();
+    showToast('Order updated ✅');
+  } catch (err) {
+    showToast(err.message || 'Update failed', 'error');
+  }
+};
 
 async function handleOrderClick(productId) {
   try {
@@ -1089,11 +1526,7 @@ async function renderFeaturedProducts() {
     const featured = await db.from('featured_products').select('product_id').eq('active', true).order('sort_order').limit(8).execute();
     const ids = featured.map(f => f.product_id);
     if (!ids.length) { grid.innerHTML = '<p class="empty-msg">Coming soon!</p>'; return; }
-    let products = await db.from('products').select('*').in('id', ids).execute();
-    // .in() does not preserve order — re-sort to match the curated
-    // featured_products.sort_order sequence.
-    const order = new Map(ids.map((id, i) => [String(id), i]));
-    products = products.slice().sort((a, b) => (order.get(String(a.id)) ?? 0) - (order.get(String(b.id)) ?? 0));
+    const products = await db.from('products').select('*').in('id', ids).execute();
     await attachImages(products);
     grid.innerHTML = products.map(productCard).join('');
     grid.querySelectorAll('.product-card').forEach((el, i) => { el.style.animationDelay = `${i*0.07}s`; observeReveal(el); });
@@ -1108,7 +1541,7 @@ async function renderTrendingProducts() {
   grid.innerHTML = skeleton(4);
   try {
     const products = await db.from('products').select('*').eq('in_stock', true).eq('is_bestseller', true)
-      .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(8).execute();
+      .order('created_at', { ascending: false }).limit(8).execute();
     await attachImages(products);
     grid.innerHTML = products.length ? products.map(productCard).join('') : '<p class="empty-msg">Coming soon!</p>';
     grid.querySelectorAll('.product-card').forEach((el, i) => { el.style.animationDelay = `${i*0.07}s`; observeReveal(el); });
@@ -1217,18 +1650,32 @@ function initInstagramSection() {
 // ─── Page: Products ───────────────────────────────────────────
 async function renderProductsPage() {
   setPage('products-page');
-  State.page = 0; State.filterCategory = null;
-  document.getElementById('productsHeading').textContent = 'All Products';
+  State.page = 0; State.filterCategory = null; State.filterBestsellerOnly = false;
+  setProductsHeading('All Products', 'Explore our collection of handmade treasures, crafted with love.');
   await loadAndRenderProducts();
 }
 
 async function renderCategoryPage(params) {
   const slug = params.get('slug');
   setPage('products-page');
-  State.filterCategory = slug; State.page = 0;
+  State.filterCategory = slug; State.page = 0; State.filterBestsellerOnly = false;
   const cat = State.categories.find(c => c.slug === slug);
-  document.getElementById('productsHeading').textContent = cat ? `${cat.icon||''} ${cat.name}` : slug;
+  setProductsHeading(cat ? `${cat.icon||''} ${cat.name}` : slug, 'Explore our collection of handmade treasures, crafted with love.');
   await loadAndRenderProducts();
+}
+
+async function renderBestSellersPage() {
+  setPage('products-page');
+  State.page = 0; State.filterCategory = null; State.filterBestsellerOnly = true;
+  setProductsHeading('⭐ Best Sellers', 'Our most-loved pieces, chosen again and again by customers like you.');
+  await loadAndRenderProducts();
+}
+
+function setProductsHeading(title, subtitle) {
+  const h = document.getElementById('productsHeading');
+  const s = document.getElementById('productsSubheading');
+  if (h) h.textContent = title;
+  if (s) s.textContent = subtitle;
 }
 
 async function loadAndRenderProducts() {
@@ -1241,10 +1688,11 @@ async function loadAndRenderProducts() {
       const cat = State.categories.find(c => c.slug === State.filterCategory);
       if (cat) q.eq('category_id', cat.id);
     }
+    if (State.filterBestsellerOnly) q.eq('is_bestseller', true);
     if (State.filterPriceMin !== null) q.gte('price', State.filterPriceMin);
     if (State.filterPriceMax !== null) q.lte('price', State.filterPriceMax);
     const offset = State.page * CONFIG.pagination.productsPerPage;
-    q.order(State.sortBy, { ascending: State.sortAsc }).order('id', { ascending: State.sortAsc }).range(offset, offset + CONFIG.pagination.productsPerPage - 1);
+    q.order(State.sortBy, { ascending: State.sortAsc }).range(offset, offset + CONFIG.pagination.productsPerPage - 1);
     const products = await q.execute();
     await attachImages(products);
     grid.innerHTML = products.length ? products.map(productCard).join('') : '<p class="empty-msg">No products found.</p>';
@@ -1280,7 +1728,7 @@ async function openProductModal(id) {
     const [productArr, imagesArr, reviewsArr] = await Promise.all([
       db.from('products').select('*').eq('id', id).limit(1).execute(),
       db.from('product_images').select('*').eq('product_id', id).order('sort_order').execute().catch(() => []),
-      db.from('reviews').select('*').eq('product_id', id).eq('approved', true).order('created_at', { ascending:false }).order('id', { ascending:false }).limit(5).execute().catch(() => []),
+      db.from('reviews').select('*').eq('product_id', id).order('created_at', { ascending:false }).limit(5).execute().catch(() => []),
     ]);
 
     const p = productArr[0];
@@ -1323,66 +1771,23 @@ async function openProductModal(id) {
           <p class="pmodal-assurance">🔒 Safe & Secure · ✂️ Handcrafted · 🎀 Gift-ready packaging</p>
         </div>
       </div>
+      ${reviewsArr.length ? `
       <div class="pmodal-reviews">
         <h3>Customer Reviews</h3>
         <div class="reviews-list">
-          ${reviewsArr.length ? reviewsArr.map(r => `
+          ${reviewsArr.map(r => `
             <div class="review-item">
               <div class="review-header">
                 <span class="review-author">${esc(r.customer_name||'Customer')}</span>
                 <span class="review-stars">${'★'.repeat(Math.min(5,r.rating||5))}</span>
               </div>
               <p class="review-text">${esc(r.review_text||r.text||'')}</p>
-            </div>`).join('') : '<p class="empty-msg">No reviews yet. Be the first!</p>'}
+            </div>`).join('')}
         </div>
-        <form id="reviewForm" class="review-form" data-product-id="${p.id}">
-          <h4>Write a Review</h4>
-          <div class="review-form__row">
-            <input type="text" name="reviewerName" placeholder="Your name" required maxlength="80">
-            <select name="reviewerRating" required aria-label="Rating">
-              <option value="5">★★★★★ (5)</option>
-              <option value="4">★★★★☆ (4)</option>
-              <option value="3">★★★☆☆ (3)</option>
-              <option value="2">★★☆☆☆ (2)</option>
-              <option value="1">★☆☆☆☆ (1)</option>
-            </select>
-          </div>
-          <textarea name="reviewerText" placeholder="Share your experience with this product…" required maxlength="1000" rows="3"></textarea>
-          <button type="submit" class="btn btn--outline btn--sm">Submit Review</button>
-          <p class="review-form__note">Reviews are checked before they appear publicly.</p>
-        </form>
-      </div>`;
+      </div>` : ''}`;
 
     buildGallery(allImages.map(i => i.image_url || i), modal.querySelector('.pmodal-gallery'));
-    modal.querySelector('#reviewForm')?.addEventListener('submit', submitReview);
   } catch { modal.querySelector('.product-modal-body').innerHTML = '<p class="empty-msg">Could not load product details.</p>'; }
-}
-
-async function submitReview(e) {
-  e.preventDefault();
-  const form = e.target;
-  const productId = form.dataset.productId;
-  const name = form.reviewerName.value.trim();
-  const rating = Number(form.reviewerRating.value);
-  const text = form.reviewerText.value.trim();
-  if (!name || !text || !rating) return;
-
-  const btn = form.querySelector('button[type="submit"]');
-  btn.disabled = true; btn.textContent = 'Submitting…';
-  try {
-    await db.from('reviews').insert({
-      product_id: Number(productId),
-      customer_name: name,
-      rating,
-      review_text: text,
-      approved: false,
-    });
-    form.innerHTML = '<p class="empty-msg">Thanks! Your review was submitted and will appear once approved. 🙏</p>';
-    showToast('Review submitted for approval ✅');
-  } catch {
-    btn.disabled = false; btn.textContent = 'Submit Review';
-    showToast('Could not submit review. Please try again.', 'error');
-  }
 }
 
 // ─── Page: Search ─────────────────────────────────────────────
@@ -1402,14 +1807,10 @@ async function searchProducts() {
   if (!grid) return;
   grid.innerHTML = skeleton(8);
   try {
-    // PostgREST `or=` syntax: strip characters that would break the
-    // filter expression (commas/parens are clause separators there).
-    const term = State.searchQuery.replace(/[,()]/g, ' ').trim();
-    const q = db.from('products').select('*')
-      .or(`name.ilike.%${term}%,product_code.ilike.%${term}%,description.ilike.%${term}%`);
+    const q = db.from('products').select('*').ilike('name', `%${State.searchQuery}%`);
     if (State.filterPriceMin !== null) q.gte('price', State.filterPriceMin);
     if (State.filterPriceMax !== null) q.lte('price', State.filterPriceMax);
-    q.order(State.sortBy, { ascending: State.sortAsc }).order('id', { ascending: State.sortAsc }).limit(CONFIG.pagination.productsPerPage);
+    q.order(State.sortBy, { ascending: State.sortAsc }).limit(CONFIG.pagination.productsPerPage);
     const results = await q.execute();
     await attachImages(results);
     grid.innerHTML = results.length
@@ -1454,7 +1855,7 @@ async function renderReviewsPage() {
   if (!grid) return;
   grid.innerHTML = skeleton(8);
   try {
-    const reviews = await db.from('reviews').select('*').eq('approved', true).order('created_at', { ascending:false }).order('id', { ascending:false }).limit(CONFIG.pagination.reviewsPerPage).execute();
+    const reviews = await db.from('reviews').select('*').order('created_at', { ascending:false }).limit(CONFIG.pagination.reviewsPerPage).execute();
     grid.innerHTML = reviews.length ? reviews.map(r => `
       <div class="review-card">
         <div class="review-header">
