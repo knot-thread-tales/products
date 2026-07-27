@@ -1124,13 +1124,41 @@ footer {
 /* ═══════════════════════════════════════════════════════════
    Review Submission Form
 ═══════════════════════════════════════════════════════════ */
-.review-form { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--c-border); }
-.review-form h4 { margin: 0 0 10px; font-size: 1rem; }
-.review-form__row { display: flex; gap: 10px; margin-bottom: 10px; }
-.review-form__row input { flex: 1; }
-.review-form input, .review-form select, .review-form textarea {
-  width: 100%; padding: 10px 12px; border: 1.5px solid var(--c-border); border-radius: var(--radius-sm, 8px);
-  font-family: var(--font-body); font-size: .9rem; color: var(--c-text); background: var(--c-surface);
+.review-form {
+  margin-top: 24px; padding: 22px 20px; border-radius: var(--r-lg);
+  background: var(--c-bg); border: 1px solid var(--c-border);
 }
-.review-form textarea { resize: vertical; margin-bottom: 10px; }
-.review-form__note { font-size: .75rem; color: var(--c-text-3); margin-top: 8px; }
+.review-form h4 { margin: 0 0 4px; font-size: 1.05rem; }
+.review-form__subtitle { font-size: .82rem; color: var(--c-text-3); margin-bottom: 18px; }
+
+.review-form__field { margin-bottom: 16px; }
+.review-form__label {
+  display: block; font-size: .82rem; font-weight: 600; color: var(--c-text-2);
+  margin-bottom: 7px;
+}
+
+.review-form input[type="text"],
+.review-form textarea {
+  width: 100%; padding: 11px 14px; border: 1.5px solid var(--c-border);
+  border-radius: var(--r-md); font-family: var(--font-body); font-size: .9rem;
+  color: var(--c-text); background: var(--c-surface);
+  outline: none; transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.review-form input[type="text"]:focus,
+.review-form textarea:focus {
+  border-color: var(--c-primary); box-shadow: 0 0 0 3px rgba(166,110,74,.12);
+}
+.review-form textarea { resize: vertical; min-height: 90px; }
+
+/* Star rating widget */
+.star-rating { display: flex; gap: 4px; }
+.star-rating__star {
+  font-size: 1.6rem; line-height: 1; color: var(--c-border-d);
+  background: none; border: none; cursor: pointer; padding: 2px;
+  transition: color var(--t-fast), transform var(--t-fast);
+}
+.star-rating__star:hover { transform: scale(1.15); }
+.star-rating__star.is-active { color: #f59e0b; }
+
+.review-form__submit { margin-top: 4px; }
+.review-form__note { font-size: .76rem; color: var(--c-text-3); margin-top: 10px; text-align: center; }
