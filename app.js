@@ -22,75 +22,42 @@ const cache = (() => {
   };
 })();
 
-// ─── Image Handler (Google Drive + Supabase Storage + any URL) ─
-// Google Drive's hotlink endpoints (drive.google.com/thumbnail,
-// /uc?export=view, etc.) are undocumented, unsupported, and fail
-// intermittently with 403s / rate limits — this is a known, widely
-// reported Google-side issue, not something fixable in our code.
-// To stay resilient we try several URL formats in order and fall
-// back to a placeholder only if every candidate fails. Non-Drive
-// URLs (e.g. Supabase Storage public URLs) pass straight through.
+// ─── Image Handler (Supabase Storage — single source of truth) ─
+// Product images now live exclusively in Supabase Storage. This used
+// to also juggle several Google Drive hotlink formats (Drive's
+// undocumented endpoints fail unpredictably with 403s/rate limits —
+// a known Google-side issue, not something fixable here), trying each
+// in turn before giving up. That whole retry chain is gone: a Storage
+// public URL either loads or it doesn't, so a single onerror →
+// placeholder is all that's needed now.
+//
+// Function names (driveImg/driveThumb/imgAttrs/handleImgFallback) are
+// kept as-is on purpose, even though "drive" no longer describes what
+// they do — every render function below calls these, and renaming
+// them would mean touching every one of those call sites for a
+// cosmetic-only change. Not worth the diff size or risk right now.
 const PLACEHOLDER_IMG = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Crect fill='%23f0e6d9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' font-size='56' text-anchor='middle' dominant-baseline='middle'%3E%F0%9F%A7%B5%3C/text%3E%3C/svg%3E`;
 
-function driveFileId(url) {
-  if (!url) return null;
-  const m = url.match(/\/d\/([a-zA-Z0-9_-]{20,})/) || url.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
-  return m ? m[1] : null;
+function imgUrl(url) {
+  return (url && url.startsWith('http')) ? url : PLACEHOLDER_IMG;
 }
 
-// Ordered list of candidate URLs to try for a given source url + size.
-function imgCandidates(url, size = 800) {
-  if (!url) return [];
-  const id = driveFileId(url);
-  if (!id) {
-    // Not a Drive link (Supabase Storage, Cloudinary, any direct URL) — use as-is.
-    return url.startsWith('http') ? [url] : [];
-  }
-  // lh3.googleusercontent.com tends to be the most hotlink-reliable Drive
-  // format; thumbnail and uc?export=view are kept as fallbacks since
-  // Google has changed/broken these endpoints before without notice.
-  return [
-    `https://lh3.googleusercontent.com/d/${id}=w${size}`,
-    `https://drive.google.com/thumbnail?id=${id}&sz=w${size}`,
-    `https://drive.google.com/uc?export=view&id=${id}`,
-  ];
-}
+function driveImg(url) { return imgUrl(url); }
+function driveThumb(url) { return imgUrl(url); }
 
-// Returns the first candidate URL to put in src=, or the placeholder.
-function driveImg(url) {
-  const c = imgCandidates(url, 800);
-  return c.length ? c[0] : PLACEHOLDER_IMG;
-}
-
-function driveThumb(url) {
-  const c = imgCandidates(url, 480);
-  return c.length ? c[0] : PLACEHOLDER_IMG;
-}
-
-// Called from onerror="" on every product image. Recomputes the
-// candidate list from the original raw URL (stored in data-raw) and
-// steps to the next one; only shows the placeholder once every
-// candidate has failed.
+// Called from onerror="" on every product image. No more candidate
+// list to step through — if a Storage URL 404s/403s, go straight to
+// the placeholder.
 function handleImgFallback(img) {
-  const raw = img.dataset.raw || '';
-  const size = img.dataset.size || '800';
-  const candidates = imgCandidates(raw, Number(size));
-  let step = parseInt(img.dataset.fbstep || '0', 10) + 1;
-  if (step < candidates.length) {
-    img.dataset.fbstep = String(step);
-    img.src = candidates[step];
-  } else {
-    img.onerror = null;
-    img.src = PLACEHOLDER_IMG;
-  }
+  img.onerror = null;
+  img.src = PLACEHOLDER_IMG;
 }
 window.handleImgFallback = handleImgFallback;
 
-// Common attributes every product <img> needs so the fallback chain
-// above can do its job: raw source url + size + a fresh error handler
-// (instead of the old one-shot `this.src = placeholder`).
-function imgAttrs(url, size = 800) {
-  return `data-raw="${esc(url || '')}" data-size="${size}" data-fbstep="0" onerror="handleImgFallback(this)"`;
+// Kept as a function (not inlined at each call site) so the onerror
+// wiring stays in exactly one place if it ever needs to change again.
+function imgAttrs(url) {
+  return `onerror="handleImgFallback(this)"`;
 }
 
 // ─── Supabase REST Client ─────────────────────────────────────
