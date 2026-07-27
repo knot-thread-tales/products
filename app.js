@@ -5,6 +5,46 @@
 
 'use strict';
 
+// ─── Theme (applies CONFIG.theme onto the CSS token vars in styles.css) ─
+function applyTheme() {
+  const t = CONFIG.theme;
+  if (!t) return;
+  const root = document.documentElement.style;
+  const map = {
+    '--c-primary':    t.colors?.primary,
+    '--c-primary-d':  t.colors?.primaryDark,
+    '--c-primary-l':  t.colors?.primaryLight,
+    '--c-secondary':  t.colors?.secondary,
+    '--c-accent':     t.colors?.accent,
+    '--c-bg':         t.colors?.bg,
+    '--c-surface':    t.colors?.surface,
+    '--c-text':       t.colors?.text,
+    '--c-text-2':     t.colors?.text2,
+    '--c-text-3':     t.colors?.text3,
+    '--c-success':    t.colors?.success,
+    '--c-error':      t.colors?.error,
+    '--c-border':     t.colors?.border,
+    '--c-border-d':   t.colors?.borderDark,
+    '--r-sm':         t.radius?.sm,
+    '--r-md':         t.radius?.md,
+    '--r-lg':         t.radius?.lg,
+    '--r-xl':         t.radius?.xl,
+    '--r-full':       t.radius?.full,
+    '--sh-sm':        t.shadow?.sm,
+    '--sh-md':        t.shadow?.md,
+    '--sh-lg':        t.shadow?.lg,
+    '--sh-xl':        t.shadow?.xl,
+    '--t-fast':       t.transition?.fast,
+    '--t-mid':        t.transition?.mid,
+    '--t-slow':       t.transition?.slow,
+    '--font-display': t.font?.display,
+    '--font-body':    t.font?.body,
+    '--max-w':        t.layout?.maxWidth,
+  };
+  Object.entries(map).forEach(([k, v]) => { if (v) root.setProperty(k, v); });
+}
+applyTheme();
+
 // ─── Cache Layer ──────────────────────────────────────────────
 const cache = (() => {
   const store = new Map();
@@ -726,7 +766,11 @@ Please confirm availability and payment instructions. 🙏`
       customization_notes: notes || null,
       status: 'pending',
     });
-  } catch { /* order still proceeds via WhatsApp even if logging fails */ }
+  } catch (err) {
+    // Order still proceeds via WhatsApp even if logging fails, but log the
+    // real reason so it's visible in devtools instead of silently vanishing.
+    console.error('Order insert failed:', err);
+  }
 
   setTimeout(() => {
     openPaymentModal();
@@ -1382,7 +1426,8 @@ async function submitReview(e) {
     });
     form.innerHTML = '<p class="empty-msg">Thanks! Your review was submitted and will appear once approved. 🙏</p>';
     showToast('Review submitted for approval ✅');
-  } catch {
+  } catch (err) {
+    console.error('Review submit failed:', err);
     btn.disabled = false; btn.textContent = '✍️ Submit Review';
     showToast('Could not submit review. Please try again.', 'error');
   }

@@ -35,6 +35,54 @@ const CONFIG = {
   cache: {
     ttlMs: 5 * 60 * 1000,
   },
+  // ── Theme ──────────────────────────────────────────────────
+  // Mirrors the CSS custom properties defined in the ":root" tokens
+  // block of styles.css. Edit values here to re-theme the site — no
+  // need to touch styles.css. applyTheme() in app.js pushes these
+  // onto :root at load, overriding the CSS defaults.
+  theme: {
+    colors: {
+      primary:      '#A66E4A',
+      primaryDark:  '#8a5836',
+      primaryLight: '#be8a6b',
+      secondary:    '#D8B89C',
+      accent:       '#E6C9A8',
+      bg:           '#FAF7F2',
+      surface:      '#FFFFFF',
+      text:         '#2C2623',
+      text2:        '#6E625A',
+      text3:        '#9c8f87',
+      success:      '#4CAF50',
+      error:        '#E53E3E',
+      border:       '#EDE4DB',
+      borderDark:   '#d5c5b5',
+    },
+    radius: {
+      sm:   '6px',
+      md:   '12px',
+      lg:   '20px',
+      xl:   '32px',
+      full: '9999px',
+    },
+    shadow: {
+      sm: '0 1px 4px rgba(44,38,35,.06), 0 2px 8px rgba(44,38,35,.04)',
+      md: '0 4px 16px rgba(44,38,35,.10), 0 1px 4px rgba(44,38,35,.06)',
+      lg: '0 8px 32px rgba(44,38,35,.14), 0 2px 8px rgba(44,38,35,.08)',
+      xl: '0 20px 60px rgba(44,38,35,.18)',
+    },
+    transition: {
+      fast: '150ms ease',
+      mid:  '280ms ease',
+      slow: '450ms ease',
+    },
+    font: {
+      display: "'Playfair Display', Georgia, serif",
+      body:    "'Inter', system-ui, -apple-system, sans-serif",
+    },
+    layout: {
+      maxWidth: '1240px',
+    },
+  },
 };
 
 Object.freeze(CONFIG);
