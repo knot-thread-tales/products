@@ -168,7 +168,19 @@ async function attachImages(products) {
   const ids = products.map(p => p.id);
   let allImages = [];
   try {
-    allImages = await db.from('product_images').select('*').in('product_id', ids).order('sort_order').execute();
+    const productIds = ids.join(',');
+
+    const response = await fetch(
+      `${CONFIG.supabase.url}/rest/v1/product_images?product_id=in.(${productIds})&order=sort_order.asc`,
+      {
+        headers: {
+          apikey: CONFIG.supabase.anonKey,
+          Authorization: `Bearer ${CONFIG.supabase.anonKey}`
+        }
+      }
+    );
+    
+    allImages = await response.json();
   } catch { allImages = []; }
 
   const byProduct = new Map();
