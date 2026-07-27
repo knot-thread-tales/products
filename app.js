@@ -1150,12 +1150,10 @@ function initFAQ(container) {
       const expanded = btn.getAttribute('aria-expanded') === 'true';
       container.querySelectorAll('.faq-question').forEach(b => {
         b.setAttribute('aria-expanded', 'false');
-        b.querySelector('.faq-icon').textContent = '+';
         b.nextElementSibling.style.maxHeight = null;
       });
       if (!expanded) {
         btn.setAttribute('aria-expanded', 'true');
-        btn.querySelector('.faq-icon').textContent = '−';
         btn.nextElementSibling.style.maxHeight = btn.nextElementSibling.scrollHeight + 'px';
       }
     });
@@ -1308,6 +1306,7 @@ async function openProductModal(id) {
             <label class="review-form__label">Your Rating</label>
             <div class="star-rating" role="radiogroup" aria-label="Star rating">
               ${[1,2,3,4,5].map(v => `<button type="button" class="star-rating__star" data-value="${v}" aria-label="${v} Star${v>1?'s':''}">★</button>`).join('')}
+              <span class="star-rating__label"></span>
             </div>
             <input type="hidden" name="reviewerRating" value="5" required>
           </div>
@@ -1333,12 +1332,30 @@ async function openProductModal(id) {
     if (reviewForm) {
       const stars = reviewForm.querySelectorAll('.star-rating__star');
       const ratingInput = reviewForm.querySelector('input[name="reviewerRating"]');
-      const setStars = (val) => {
+      const ratingLabel = reviewForm.querySelector('.star-rating__label');
+      const labels = { 1:'Poor', 2:'Fair', 3:'Good', 4:'Very Good', 5:'Excellent' };
+    
+      const paint = (val) => {
         stars.forEach(btn => btn.classList.toggle('is-active', Number(btn.dataset.value) <= val));
-        ratingInput.value = val;
       };
-      stars.forEach(btn => btn.addEventListener('click', () => setStars(Number(btn.dataset.value))));
-      setStars(5); // sensible default
+      const setRating = (val) => {
+        ratingInput.value = val;
+        paint(val);
+        if (ratingLabel) ratingLabel.textContent = labels[val] || '';
+      };
+    
+      stars.forEach(btn => {
+        btn.addEventListener('click', () => setRating(Number(btn.dataset.value)));
+        btn.addEventListener('mouseenter', () => {
+          const hoverVal = Number(btn.dataset.value);
+          stars.forEach(s => s.classList.toggle('is-hover', Number(s.dataset.value) <= hoverVal));
+        });
+        btn.addEventListener('mouseleave', () => {
+          stars.forEach(s => s.classList.remove('is-hover'));
+        });
+      });
+    
+      setRating(5); // sensible default
       reviewForm.addEventListener('submit', submitReview);
     }
   } catch { modal.querySelector('.product-modal-body').innerHTML = '<p class="empty-msg">Could not load product details.</p>'; }
