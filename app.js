@@ -23,19 +23,6 @@ const cache = (() => {
 })();
 
 // ─── Image Handler (Supabase Storage — single source of truth) ─
-// Product images now live exclusively in Supabase Storage. This used
-// to also juggle several Google Drive hotlink formats (Drive's
-// undocumented endpoints fail unpredictably with 403s/rate limits —
-// a known Google-side issue, not something fixable here), trying each
-// in turn before giving up. That whole retry chain is gone: a Storage
-// public URL either loads or it doesn't, so a single onerror →
-// placeholder is all that's needed now.
-//
-// Function names (driveImg/driveThumb/imgAttrs/handleImgFallback) are
-// kept as-is on purpose, even though "drive" no longer describes what
-// they do — every render function below calls these, and renaming
-// them would mean touching every one of those call sites for a
-// cosmetic-only change. Not worth the diff size or risk right now.
 const PLACEHOLDER_IMG = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Crect fill='%23f0e6d9' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' font-size='56' text-anchor='middle' dominant-baseline='middle'%3E%F0%9F%A7%B5%3C/text%3E%3C/svg%3E`;
 
 function imgUrl(url) {
@@ -45,17 +32,12 @@ function imgUrl(url) {
 function driveImg(url) { return imgUrl(url); }
 function driveThumb(url) { return imgUrl(url); }
 
-// Called from onerror="" on every product image. No more candidate
-// list to step through — if a Storage URL 404s/403s, go straight to
-// the placeholder.
 function handleImgFallback(img) {
   img.onerror = null;
   img.src = PLACEHOLDER_IMG;
 }
 window.handleImgFallback = handleImgFallback;
 
-// Kept as a function (not inlined at each call site) so the onerror
-// wiring stays in exactly one place if it ever needs to change again.
 function imgAttrs(url) {
   return `onerror="handleImgFallback(this)"`;
 }
@@ -77,8 +59,14 @@ const db = (() => {
     }
     if (params.or) url.searchParams.set('or', params.or);
     if (params.order) url.searchParams.set('order', params.order);
-    if (params.limit !== undefined) url.searchParams.set('limit', params.limit);
-    if (params.offset !== undefined) url.searchParams.set('offset', params.offset);
+    // FIX: _limit/_offset default to null (not undefined) in the query
+    // builder below. The old `!== undefined` check let a literal "null"
+    // string leak into the querystring whenever .limit()/.range() wasn't
+    // called, which PostgREST rejects as an invalid integer — silently
+    // caught by every caller's try/catch, so pages (e.g. the full FAQ
+    // list, categories nav) rendered empty with no visible error.
+    if (params.limit != null) url.searchParams.set('limit', params.limit);
+    if (params.offset != null) url.searchParams.set('offset', params.offset);
 
     const cacheKey = url.toString();
     const cached = cache.get(cacheKey);
@@ -103,16 +91,7 @@ const db = (() => {
       gte(col, val) { this._filter[col] = `gte.${val}`; return this; },
       lte(col, val) { this._filter[col] = `lte.${val}`; return this; },
       in(col, vals) { this._filter[col] = `in.(${vals.join(',')})`; return this; },
-      // Raw PostgREST `or=(...)` expression, e.g.
-      // "name.ilike.%foo%,product_code.ilike.%foo%"
       or(expr) { this._or = expr; return this; },
-      // Accumulates — calling .order() more than once appends a
-      // secondary/tertiary sort key instead of overwriting the first.
-      // This matters: without a deterministic tiebreaker, rows that
-      // share the same sort value (e.g. several products seeded with
-      // an identical created_at timestamp) can be ordered differently
-      // between paginated requests, causing them to silently vanish
-      // from a page or duplicate across pages.
       order(col, { ascending = true } = {}) {
         const clause = `${col}.${ascending ? 'asc' : 'desc'}`;
         this._order = this._order ? `${this._order},${clause}` : clause;
@@ -144,7 +123,7 @@ const db = (() => {
       const body = await res.text().catch(() => '');
       throw new Error(`DB insert ${res.status} on ${table}: ${body}`);
     }
-    cache.clear(); // writes can change results of already-cached reads
+    cache.clear();
     const data = await res.json().catch(() => []);
     return Array.isArray(data) ? data[0] : data;
   }
@@ -158,11 +137,6 @@ const db = (() => {
 })();
 
 // ─── Shared Product Images Fetcher ────────────────────────────
-// Both attachImages() (product grids/cards) and openProductModal()
-// (product detail gallery) need rows from product_images. The
-// db.from(...).execute() query-builder path was unreliable for this
-// table, so both now go through this single direct REST fetch
-// instead of each rolling their own.
 async function fetchProductImages(productIds) {
   const ids = Array.isArray(productIds) ? productIds : [productIds];
   if (!ids.length) return [];
@@ -182,13 +156,7 @@ async function fetchProductImages(productIds) {
   } catch { return []; }
 }
 
-
 // ─── Image Attachment Helper ──────────────────────────────────
-// Products no longer carry a main_image column — all images live
-// in product_images. This batches a single query to fetch every
-// product's full image set (sorted) and attaches:
-//   product.main_image  → primary (or first) image URL, for cards
-//   product.images       → full sorted array, for the gallery slider
 async function attachImages(products) {
   if (!products?.length) return products;
   const ids = products.map(p => p.id);
@@ -212,14 +180,12 @@ async function attachImages(products) {
   return products;
 }
 
-
 const Router = (() => {
   const routes = new Map();
   let _current = null;
 
   function getPath() { return location.hash.slice(1) || '/'; }
   function navigate(path) { location.hash = path; }
-
   function on(path, handler) { routes.set(path, handler); }
 
   function dispatch() {
@@ -317,7 +283,6 @@ function initFloatingWhatsApp() {
     <span class="fab-whatsapp__pulse"></span>`;
   document.body.appendChild(btn);
 
-  // Show tooltip after 4 seconds
   setTimeout(() => {
     const tip = document.createElement('div');
     tip.className = 'fab-tooltip';
@@ -327,7 +292,7 @@ function initFloatingWhatsApp() {
   }, 4000);
 }
 
-// ─── Live Visitor Counter (simulated, resets per session) ─────
+// ─── Live Visitor Counter ───────────────────────────────────
 function initLiveVisitors() {
   const el = document.getElementById('liveVisitors');
   if (!el) return;
@@ -345,7 +310,6 @@ function initLiveVisitors() {
 function initCountdown() {
   const el = document.getElementById('offerCountdown');
   if (!el) return;
-  // Midnight today
   const end = new Date(); end.setHours(23, 59, 59, 0);
   function tick() {
     const now = new Date();
@@ -388,10 +352,10 @@ function initBuyTicker() {
   setInterval(show, 4000);
 }
 
-// ─── Image Slider / Gallery Component (Google Drive) ─────────
+// ─── Image Slider / Gallery Component ─────────────────────────
 // Professional slider: swipe support, arrow nav, dot indicators,
-// thumbnail strip, pinch/scroll-wheel + click-to-zoom, and a
-// fullscreen lightbox with its own nav. Used in the product modal.
+// thumbnail strip, click-to-zoom-at-point + pan, and a fullscreen
+// lightbox with its own nav. Used in the product modal.
 function buildGallery(images, container) {
   if (!images?.length) {
     container.innerHTML = `<div class="slider slider--empty"><img src="${driveImg('')}" alt="No image available" class="slider__img"></div>`;
@@ -460,59 +424,82 @@ function buildGallery(images, container) {
 
   function resetZoom() {
     zoomed = false;
-    slides.forEach(s => { const img = s.querySelector('.slider__img'); if (img) { img.style.transform = ''; img.classList.remove('zoomed'); } });
+    slides.forEach(s => { const img = s.querySelector('.slider__img'); if (img) { img.style.transformOrigin = ''; img.classList.remove('zoomed'); } });
     viewport.classList.remove('is-zoomed');
   }
 
   container.querySelector('.slider__arrow--prev')?.addEventListener('click', () => goTo(active - 1));
-  container.querySelector('.slider__arrow--next')?.addEventListener('click', () => goTo(active - (-1)));
+  container.querySelector('.slider__arrow--next')?.addEventListener('click', () => goTo(active + 1));
   dots.forEach(d => d.addEventListener('click', () => goTo(Number(d.dataset.idx))));
   thumbs.forEach(t => t.addEventListener('click', () => goTo(Number(t.dataset.idx))));
 
-  // ── Zoom (click-to-toggle + mousemove pan on desktop, pinch-friendly on touch) ──
-  function toggleZoom(e) {
-    const activeSlide = slides[active];
-    const img = activeSlide?.querySelector('.slider__img');
-    if (!img) return;
-    zoomed = !zoomed;
-    viewport.classList.toggle('is-zoomed', zoomed);
-    img.classList.toggle('zoomed', zoomed);
-    if (!zoomed) { img.style.transform = ''; return; }
-    if (e && e.clientX) positionZoom(e, img, activeSlide);
+  // ── Zoom (click-to-toggle at click point, mousemove pan, touch pan) ──
+  function getActiveImg() {
+    return slides[active]?.querySelector('.slider__img');
   }
 
-  function positionZoom(e, img, slideEl) {
+  function setZoomOrigin(clientX, clientY) {
+    const img = getActiveImg();
+    const slideEl = slides[active];
+    if (!img || !slideEl) return;
     const rect = slideEl.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    const x = Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100));
+    const y = Math.min(100, Math.max(0, ((clientY - rect.top) / rect.height) * 100));
     img.style.transformOrigin = `${x}% ${y}%`;
   }
 
-  container.querySelector('#sliderZoomBtn')?.addEventListener('click', (e) => { e.stopPropagation(); toggleZoom(e); });
+  function setZoom(on, clientX, clientY) {
+    const img = getActiveImg();
+    if (!img) return;
+    zoomed = on;
+    viewport.classList.toggle('is-zoomed', zoomed);
+    img.classList.toggle('zoomed', zoomed);
+    if (!zoomed) { img.style.transformOrigin = ''; return; }
+    if (typeof clientX === 'number') setZoomOrigin(clientX, clientY);
+    else img.style.transformOrigin = '50% 50%';
+  }
 
+  // Click directly on the image: zoom in centered on the click point,
+  // or zoom back out if already zoomed.
   slides.forEach(slideEl => {
-    const img = slideEl.querySelector('.slider__img');
-    slideEl.addEventListener('click', (e) => { if (!zoomed) toggleZoom(e); });
-    slideEl.addEventListener('mousemove', (e) => { if (zoomed) positionZoom(e, img, slideEl); });
-    slideEl.addEventListener('mouseleave', () => { if (zoomed) toggleZoom(); });
+    slideEl.addEventListener('click', (e) => {
+      if (zoomed) setZoom(false);
+      else setZoom(true, e.clientX, e.clientY);
+    });
   });
 
-  // ── Swipe support (touch) ──
+  // Pan while zoomed. Bound on the viewport (not the slide) so moving
+  // the cursor over the overlay buttons — which are siblings of the
+  // slide, not descendants — doesn't interrupt panning.
+  viewport.addEventListener('mousemove', (e) => {
+    if (zoomed) setZoomOrigin(e.clientX, e.clientY);
+  });
+
+  // Dedicated zoom button always zooms centered — it no longer uses
+  // its own on-screen position (which sat near the bottom-right of
+  // the image and made zoom look permanently "stuck" in that corner).
+  container.querySelector('#sliderZoomBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setZoom(!zoomed);
+  });
+
+  // ── Swipe support (touch) — also pans while zoomed ──
   let touchStartX = 0, touchDeltaX = 0, isTouching = false;
   viewport.addEventListener('touchstart', (e) => {
-    if (zoomed) return;
     isTouching = true;
     touchStartX = e.touches[0].clientX;
-    track.style.transition = 'none';
+    if (!zoomed) track.style.transition = 'none';
   }, { passive: true });
   viewport.addEventListener('touchmove', (e) => {
-    if (!isTouching || zoomed) return;
-    touchDeltaX = e.touches[0].clientX - touchStartX;
+    if (!isTouching) return;
+    const t = e.touches[0];
+    if (zoomed) { setZoomOrigin(t.clientX, t.clientY); return; }
+    touchDeltaX = t.clientX - touchStartX;
     const pct = (touchDeltaX / viewport.clientWidth) * 100;
     track.style.transform = `translateX(calc(-${active * 100}% + ${pct}%))`;
   }, { passive: true });
   viewport.addEventListener('touchend', () => {
-    if (!isTouching || zoomed) return;
+    if (!isTouching || zoomed) { isTouching = false; return; }
     isTouching = false;
     if (Math.abs(touchDeltaX) > viewport.clientWidth * 0.18) {
       goTo(touchDeltaX < 0 ? active + 1 : active - 1);
@@ -550,30 +537,27 @@ function buildGallery(images, container) {
     const img = overlay.querySelector('#fsImg');
     const wrap = overlay.querySelector('#fsImgWrap');
 
+    function fsSetOrigin(clientX, clientY) {
+      const rect = wrap.getBoundingClientRect();
+      const x = Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100));
+      const y = Math.min(100, Math.max(0, ((clientY - rect.top) / rect.height) * 100));
+      img.style.transformOrigin = `${x}% ${y}%`;
+    }
     function fsGoTo(i) {
       cur = (i + urls.length) % urls.length;
       img.src = driveImg(urls[cur]);
       if (counter) counter.textContent = `${cur + 1} / ${urls.length}`;
-      fsZoomed = false; img.classList.remove('zoomed'); img.style.transform = '';
+      fsZoomed = false; img.classList.remove('zoomed'); img.style.transformOrigin = '';
     }
     function fsToggleZoom(e) {
       fsZoomed = !fsZoomed;
       img.classList.toggle('zoomed', fsZoomed);
-      if (!fsZoomed) { img.style.transform = ''; return; }
-      if (e?.clientX) {
-        const rect = wrap.getBoundingClientRect();
-        const x = ((e.clientX - rect.left) / rect.width) * 100;
-        const y = ((e.clientY - rect.top) / rect.height) * 100;
-        img.style.transformOrigin = `${x}% ${y}%`;
-      }
+      if (!fsZoomed) { img.style.transformOrigin = ''; return; }
+      if (e?.clientX) fsSetOrigin(e.clientX, e.clientY);
+      else img.style.transformOrigin = '50% 50%';
     }
     wrap.addEventListener('click', (e) => { if (e.target === img) fsToggleZoom(e); });
-    wrap.addEventListener('mousemove', (e) => { if (fsZoomed) fsToggleZoom.call(null); if (fsZoomed && e.clientX) {
-      const rect = wrap.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 100;
-      const y = ((e.clientY - rect.top) / rect.height) * 100;
-      img.style.transformOrigin = `${x}% ${y}%`;
-    }});
+    wrap.addEventListener('mousemove', (e) => { if (fsZoomed) fsSetOrigin(e.clientX, e.clientY); });
 
     function close() { overlay.classList.remove('active'); setTimeout(() => overlay.remove(), 280); document.removeEventListener('keydown', kh); goTo(cur, false); }
     overlay.querySelector('.fullscreen-close').onclick = close;
@@ -588,17 +572,18 @@ function buildGallery(images, container) {
     }
     document.addEventListener('keydown', kh);
 
-    // Swipe in fullscreen too
     let fsStartX = 0, fsDeltaX = 0;
     wrap.addEventListener('touchstart', (e) => { fsStartX = e.touches[0].clientX; }, { passive: true });
+    wrap.addEventListener('touchmove', (e) => { if (fsZoomed) fsSetOrigin(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
     wrap.addEventListener('touchend', (e) => {
+      if (fsZoomed) return;
       fsDeltaX = e.changedTouches[0].clientX - fsStartX;
       if (Math.abs(fsDeltaX) > 60) fsGoTo(fsDeltaX < 0 ? cur + 1 : cur - 1);
     }, { passive: true });
   }
 
   container.querySelector('#sliderFullscreenBtn')?.addEventListener('click', (e) => { e.stopPropagation(); openFullscreenAt(active); });
-  window.openFullscreen = openFullscreenAt; // exposed for any external callers
+  window.openFullscreen = openFullscreenAt;
 
   goTo(0, false);
 }
@@ -650,8 +635,6 @@ function productCard(p) {
     </article>`;
 }
 
-// Auto-advance the mini image slider on card hover (desktop) — gives
-// a quick multi-photo preview without opening the full product modal.
 function initCardMiniSliders(scope = document) {
   scope.querySelectorAll('.card-mini-slider').forEach(slider => {
     const card = slider.closest('.product-card');
@@ -674,8 +657,6 @@ function initCardMiniSliders(scope = document) {
     });
   });
 }
-
-
 
 // ─── WhatsApp Order Modal ─────────────────────────────────────
 function openOrderModal(product) {
@@ -731,9 +712,6 @@ Please confirm availability and payment instructions. 🙏`
   fireConfetti();
   showToast('Order sent! Opening WhatsApp… 🎉');
 
-  // Best-effort save to the orders table — WhatsApp remains the source
-  // of truth for fulfilment, but this gives an in-dashboard order log
-  // even if the customer never actually sends the WhatsApp message.
   try {
     await db.from('orders').insert({
       product_id: p.id,
@@ -832,7 +810,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $$('.modal--open').forEach(m => closeModal(m.id));
 });
 
-// ─── Announcements Bar (discounts, site-wide notices) ─────────
+// ─── Announcements Bar ─────────────────────────────────────────
 async function renderAnnouncementBar() {
   const bar = document.getElementById('announcementBar');
   if (!bar) return;
@@ -951,9 +929,7 @@ function initMobileMenu() {
     document.body.style.overflow = open ? 'hidden' : '';
   });
   drawer.querySelector('.drawer-close')?.addEventListener('click', closeMobileMenu);
-  // Close on outside click (clicking the dimmed backdrop)
   backdrop?.addEventListener('click', closeMobileMenu);
-  // Close on Escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && drawer.classList.contains('drawer--open')) closeMobileMenu();
   });
@@ -1080,8 +1056,6 @@ async function renderFeaturedProducts() {
     const ids = featured.map(f => f.product_id);
     if (!ids.length) { grid.innerHTML = '<p class="empty-msg">Coming soon!</p>'; return; }
     let products = await db.from('products').select('*').in('id', ids).execute();
-    // .in() does not preserve order — re-sort to match the curated
-    // featured_products.sort_order sequence.
     const order = new Map(ids.map((id, i) => [String(id), i]));
     products = products.slice().sort((a, b) => (order.get(String(a.id)) ?? 0) - (order.get(String(b.id)) ?? 0));
     await attachImages(products);
@@ -1325,26 +1299,48 @@ async function openProductModal(id) {
               <p class="review-text">${esc(r.review_text||r.text||'')}</p>
             </div>`).join('') : '<p class="empty-msg">No reviews yet. Be the first!</p>'}
         </div>
+
         <form id="reviewForm" class="review-form" data-product-id="${p.id}">
-          <h4>Write a Review</h4>
-          <div class="review-form__row">
-            <input type="text" name="reviewerName" placeholder="Your name" required maxlength="80">
-            <select name="reviewerRating" required aria-label="Rating">
-              <option value="5">★★★★★ (5)</option>
-              <option value="4">★★★★☆ (4)</option>
-              <option value="3">★★★☆☆ (3)</option>
-              <option value="2">★★☆☆☆ (2)</option>
-              <option value="1">★☆☆☆☆ (1)</option>
-            </select>
+          <h4>Share Your Experience</h4>
+          <p class="review-form__subtitle">Your feedback helps other shoppers decide.</p>
+
+          <div class="review-form__field">
+            <label class="review-form__label">Your Rating</label>
+            <div class="star-rating" role="radiogroup" aria-label="Star rating">
+              ${[1,2,3,4,5].map(v => `<button type="button" class="star-rating__star" data-value="${v}" aria-label="${v} Star${v>1?'s':''}">★</button>`).join('')}
+            </div>
+            <input type="hidden" name="reviewerRating" value="5" required>
           </div>
-          <textarea name="reviewerText" placeholder="Share your experience with this product…" required maxlength="1000" rows="3"></textarea>
-          <button type="submit" class="btn btn--outline btn--sm">Submit Review</button>
-          <p class="review-form__note">Reviews are checked before they appear publicly.</p>
+
+          <div class="review-form__field">
+            <label class="review-form__label" for="reviewerName_${p.id}">Your Name</label>
+            <input type="text" id="reviewerName_${p.id}" name="reviewerName" placeholder="e.g. Priya S." required maxlength="80">
+          </div>
+
+          <div class="review-form__field">
+            <label class="review-form__label" for="reviewerText_${p.id}">Your Review</label>
+            <textarea id="reviewerText_${p.id}" name="reviewerText" placeholder="How was the quality, fit, or packaging? What did you love about it?" required maxlength="1000" rows="4"></textarea>
+          </div>
+
+          <button type="submit" class="btn btn--primary btn--sm review-form__submit">✍️ Submit Review</button>
+          <p class="review-form__note">🔒 Reviews are checked before they appear publicly.</p>
         </form>
       </div>`;
 
     buildGallery(allImages.map(i => i.image_url || i), modal.querySelector('.pmodal-gallery'));
-    modal.querySelector('#reviewForm')?.addEventListener('submit', submitReview);
+
+    const reviewForm = modal.querySelector('#reviewForm');
+    if (reviewForm) {
+      const stars = reviewForm.querySelectorAll('.star-rating__star');
+      const ratingInput = reviewForm.querySelector('input[name="reviewerRating"]');
+      const setStars = (val) => {
+        stars.forEach(btn => btn.classList.toggle('is-active', Number(btn.dataset.value) <= val));
+        ratingInput.value = val;
+      };
+      stars.forEach(btn => btn.addEventListener('click', () => setStars(Number(btn.dataset.value))));
+      setStars(5); // sensible default
+      reviewForm.addEventListener('submit', submitReview);
+    }
   } catch { modal.querySelector('.product-modal-body').innerHTML = '<p class="empty-msg">Could not load product details.</p>'; }
 }
 
@@ -1370,7 +1366,7 @@ async function submitReview(e) {
     form.innerHTML = '<p class="empty-msg">Thanks! Your review was submitted and will appear once approved. 🙏</p>';
     showToast('Review submitted for approval ✅');
   } catch {
-    btn.disabled = false; btn.textContent = 'Submit Review';
+    btn.disabled = false; btn.textContent = '✍️ Submit Review';
     showToast('Could not submit review. Please try again.', 'error');
   }
 }
@@ -1392,8 +1388,6 @@ async function searchProducts() {
   if (!grid) return;
   grid.innerHTML = skeleton(8);
   try {
-    // PostgREST `or=` syntax: strip characters that would break the
-    // filter expression (commas/parens are clause separators there).
     const term = State.searchQuery.replace(/[,()]/g, ' ').trim();
     const q = db.from('products').select('*')
       .or(`name.ilike.%${term}%,product_code.ilike.%${term}%,description.ilike.%${term}%`);
