@@ -97,7 +97,7 @@ const db = (() => {
     if (params.filter) {
       Object.entries(params.filter).forEach(([k, v]) => url.searchParams.set(k, v));
     }
-    if (params.or) url.searchParams.set('or', params.or);
+    if (params.or) url.searchParams.set('or', `(${params.or})`);
     if (params.order) url.searchParams.set('order', params.order);
     // FIX: _limit/_offset default to null (not undefined) in the query
     // builder below. The old `!== undefined` check let a literal "null"
@@ -262,6 +262,9 @@ const State = {
   filterCategory: null,
   filterPriceMin: null,
   filterPriceMax: null,
+  filterInStock: false,
+  filterBestseller: false,
+  filterCustomizable: false,
   sortBy: 'created_at',
   sortAsc: false,
   page: 0,
@@ -989,6 +992,7 @@ async function initApp() {
   initScrollHeader();
   initFloatingWhatsApp();
   initBuyTicker();
+  initProductFilters();
 }
 
 function shareProduct(id, name) {
@@ -1395,6 +1399,7 @@ async function renderProductsPage() {
   setPage('products-page');
   State.page = 0; State.filterCategory = null;
   document.getElementById('productsHeading').textContent = 'All Products';
+  updatePfCount(); renderActiveFilterChips();
   await loadAndRenderProducts();
 }
 
@@ -1404,6 +1409,7 @@ async function renderCategoryPage(params) {
   State.filterCategory = slug; State.page = 0;
   const cat = State.categories.find(c => c.slug === slug);
   document.getElementById('productsHeading').textContent = cat ? `${cat.icon||''} ${cat.name}` : slug;
+  updatePfCount(); renderActiveFilterChips();
   await loadAndRenderProducts();
 }
 
@@ -1419,6 +1425,9 @@ async function loadAndRenderProducts() {
     }
     if (State.filterPriceMin !== null) q.gte('price', State.filterPriceMin);
     if (State.filterPriceMax !== null) q.lte('price', State.filterPriceMax);
+    if (State.filterInStock) q.eq('in_stock', true);
+    if (State.filterBestseller) q.eq('is_bestseller', true);
+    if (State.filterCustomizable) q.eq('is_customizable', true);
     const offset = State.page * CONFIG.pagination.productsPerPage;
     q.order(State.sortBy, { ascending: State.sortAsc }).order('id', { ascending: State.sortAsc }).range(offset, offset + CONFIG.pagination.productsPerPage - 1);
     const products = await q.execute();
@@ -1427,6 +1436,8 @@ async function loadAndRenderProducts() {
     grid.querySelectorAll('.product-card').forEach((el, i) => { el.style.animationDelay = `${i*0.05}s`; observeReveal(el); });
     initCardMiniSliders(grid);
     renderPagination(products.length);
+    const rc = document.getElementById('pfResultCount');
+    if (rc) rc.textContent = products.length ? `${products.length} item${products.length!==1?'s':''}` : '';
   } catch { grid.innerHTML = '<p class="empty-msg">Could not load products.</p>'; }
 }
 
@@ -1615,6 +1626,7 @@ async function renderSearchPage(params) {
   if (h) h.textContent = q ? `Results for "${q}"` : 'Search Products';
   const inp = document.getElementById('searchPageInput');
   if (inp) inp.value = q;
+  updatePfCount(); renderActiveFilterChips();
   if (q) await searchProducts();
 }
 
@@ -1626,8 +1638,15 @@ async function searchProducts() {
     const term = State.searchQuery.replace(/[,()]/g, ' ').trim();
     const q = db.from('products').select('*')
       .or(`name.ilike.%${term}%,product_code.ilike.%${term}%,description.ilike.%${term}%`);
+    if (State.filterCategory) {
+      const cat = State.categories.find(c => c.slug === State.filterCategory);
+      if (cat) q.eq('category_id', cat.id);
+    }
     if (State.filterPriceMin !== null) q.gte('price', State.filterPriceMin);
     if (State.filterPriceMax !== null) q.lte('price', State.filterPriceMax);
+    if (State.filterInStock) q.eq('in_stock', true);
+    if (State.filterBestseller) q.eq('is_bestseller', true);
+    if (State.filterCustomizable) q.eq('is_customizable', true);
     q.order(State.sortBy, { ascending: State.sortAsc }).order('id', { ascending: State.sortAsc }).limit(CONFIG.pagination.productsPerPage);
     const results = await q.execute();
     await attachImages(results);
@@ -1741,28 +1760,171 @@ ${f.contactMessage?.value.trim()}`
 }
 
 // ─── Sort / Filter ────────────────────────────────────────────
+function reloadCurrentPage() {
+  Router.current() === '/search' ? searchProducts() : loadAndRenderProducts();
+}
+
 window.applySort = (val) => {
   const [col, dir] = val.split(':');
   State.sortBy = col; State.sortAsc = dir === 'asc'; State.page = 0;
-  Router.current() === '/search' ? searchProducts() : loadAndRenderProducts();
+  reloadCurrentPage();
 };
 
-window.applyPriceFilter = () => {
-  const min = document.getElementById('priceMin')?.value;
-  const max = document.getElementById('priceMax')?.value;
-  State.filterPriceMin = min ? Number(min) : null;
-  State.filterPriceMax = max ? Number(max) : null;
-  State.page = 0;
-  Router.current() === '/search' ? searchProducts() : loadAndRenderProducts();
-};
+function renderCategoryChips() {
+  const wrap = document.getElementById('pfCategoryChips');
+  if (!wrap) return;
+  const cats = State.categories || [];
+  wrap.innerHTML = [`<button type="button" class="pf-chip${!State.filterCategory ? ' active' : ''}" data-slug="">All</button>`]
+    .concat(cats.map(c => `<button type="button" class="pf-chip${State.filterCategory === c.slug ? ' active' : ''}" data-slug="${esc(c.slug)}">${esc(c.icon || '')} ${esc(c.name)}</button>`))
+    .join('');
+  wrap.querySelectorAll('.pf-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      wrap.querySelectorAll('.pf-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      State.filterCategory = chip.dataset.slug || null;
+    });
+  });
+}
 
-window.clearFilters = () => {
-  State.filterPriceMin = null; State.filterPriceMax = null;
-  State.sortBy = 'created_at'; State.sortAsc = false; State.page = 0;
-  const min = document.getElementById('priceMin'); if (min) min.value = '';
-  const max = document.getElementById('priceMax'); if (max) max.value = '';
-  Router.current() === '/search' ? searchProducts() : loadAndRenderProducts();
-};
+function syncFilterSheetFromState() {
+  const min = document.getElementById('pfPriceMin');
+  const max = document.getElementById('pfPriceMax');
+  if (min) min.value = State.filterPriceMin ?? '';
+  if (max) max.value = State.filterPriceMax ?? '';
+  document.querySelectorAll('#pfPriceChips .pf-chip').forEach(c => {
+    const hasRange = State.filterPriceMin !== null || State.filterPriceMax !== null;
+    const matches = String(State.filterPriceMin ?? '') === (c.dataset.min || '') && String(State.filterPriceMax ?? '') === (c.dataset.max || '');
+    c.classList.toggle('active', hasRange && matches);
+  });
+  const inStock = document.getElementById('pfInStock');
+  if (inStock) inStock.checked = !!State.filterInStock;
+  document.getElementById('pfChipBestseller')?.classList.toggle('active', !!State.filterBestseller);
+  document.getElementById('pfChipCustom')?.classList.toggle('active', !!State.filterCustomizable);
+}
+
+function updatePfCount() {
+  let n = 0;
+  if (State.filterCategory) n++;
+  if (State.filterPriceMin !== null || State.filterPriceMax !== null) n++;
+  if (State.filterInStock) n++;
+  if (State.filterBestseller) n++;
+  if (State.filterCustomizable) n++;
+  [document.getElementById('pfCount'), document.getElementById('pfCountSearch')].forEach(el => {
+    if (!el) return;
+    if (n > 0) { el.textContent = n; el.hidden = false; } else { el.hidden = true; }
+  });
+  [document.getElementById('pfOpenBtn'), document.getElementById('pfOpenBtnSearch')].forEach(el => el?.classList.toggle('is-active', n > 0));
+}
+
+function renderActiveFilterChips() {
+  const wrap = document.getElementById('pfActiveChips');
+  if (!wrap) return;
+  const chips = [];
+  if (State.filterCategory) {
+    const cat = State.categories.find(c => c.slug === State.filterCategory);
+    chips.push({ key: 'category', label: cat ? cat.name : State.filterCategory });
+  }
+  if (State.filterPriceMin !== null || State.filterPriceMax !== null) {
+    chips.push({ key: 'price', label: `₹${State.filterPriceMin ?? 0}${State.filterPriceMax !== null ? ' – ₹' + State.filterPriceMax : '+'}` });
+  }
+  if (State.filterInStock) chips.push({ key: 'stock', label: 'In Stock' });
+  if (State.filterBestseller) chips.push({ key: 'bestseller', label: '⭐ Bestseller' });
+  if (State.filterCustomizable) chips.push({ key: 'custom', label: '✏️ Customizable' });
+
+  if (!chips.length) { wrap.hidden = true; wrap.innerHTML = ''; return; }
+  wrap.hidden = false;
+  wrap.innerHTML = chips.map(c => `<span class="pf-activechip" data-key="${c.key}">${esc(c.label)}<button type="button" aria-label="Remove filter">&times;</button></span>`).join('');
+  wrap.querySelectorAll('.pf-activechip button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.parentElement.dataset.key;
+      if (key === 'category') State.filterCategory = null;
+      if (key === 'price') { State.filterPriceMin = null; State.filterPriceMax = null; }
+      if (key === 'stock') State.filterInStock = false;
+      if (key === 'bestseller') State.filterBestseller = false;
+      if (key === 'custom') State.filterCustomizable = false;
+      State.page = 0;
+      updatePfCount(); renderActiveFilterChips(); reloadCurrentPage();
+    });
+  });
+}
+
+function initProductFilters() {
+  const backdrop = document.getElementById('pfBackdrop');
+  const sheet = document.getElementById('pfSheet');
+  if (!sheet) return;
+  const openBtns = [document.getElementById('pfOpenBtn'), document.getElementById('pfOpenBtnSearch')].filter(Boolean);
+  const closeBtn = document.getElementById('pfCloseBtn');
+  const applyBtn = document.getElementById('pfApplyBtn');
+  const clearBtn = document.getElementById('pfClearBtn');
+  const priceMinInput = document.getElementById('pfPriceMin');
+  const priceMaxInput = document.getElementById('pfPriceMax');
+  const inStockInput = document.getElementById('pfInStock');
+  const chipBestseller = document.getElementById('pfChipBestseller');
+  const chipCustom = document.getElementById('pfChipCustom');
+
+  function openSheet() {
+    renderCategoryChips();
+    syncFilterSheetFromState();
+    backdrop.classList.add('is-open');
+    sheet.classList.add('is-open');
+    sheet.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeSheet() {
+    backdrop.classList.remove('is-open');
+    sheet.classList.remove('is-open');
+    sheet.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+  openBtns.forEach(b => b.addEventListener('click', openSheet));
+  closeBtn?.addEventListener('click', closeSheet);
+  backdrop?.addEventListener('click', closeSheet);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheet.classList.contains('is-open')) closeSheet(); });
+
+  document.getElementById('pfPriceChips')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('.pf-chip');
+    if (!chip) return;
+    const wasActive = chip.classList.contains('active');
+    document.querySelectorAll('#pfPriceChips .pf-chip').forEach(c => c.classList.remove('active'));
+    if (!wasActive) {
+      chip.classList.add('active');
+      priceMinInput.value = chip.dataset.min || '';
+      priceMaxInput.value = chip.dataset.max || '';
+    } else {
+      priceMinInput.value = ''; priceMaxInput.value = '';
+    }
+  });
+  [priceMinInput, priceMaxInput].forEach(inp => inp?.addEventListener('input', () => {
+    document.querySelectorAll('#pfPriceChips .pf-chip').forEach(c => c.classList.remove('active'));
+  }));
+
+  chipBestseller?.addEventListener('click', () => chipBestseller.classList.toggle('active'));
+  chipCustom?.addEventListener('click', () => chipCustom.classList.toggle('active'));
+
+  applyBtn?.addEventListener('click', () => {
+    State.filterPriceMin = priceMinInput.value ? Number(priceMinInput.value) : null;
+    State.filterPriceMax = priceMaxInput.value ? Number(priceMaxInput.value) : null;
+    State.filterInStock = !!inStockInput?.checked;
+    State.filterBestseller = chipBestseller?.classList.contains('active') || false;
+    State.filterCustomizable = chipCustom?.classList.contains('active') || false;
+    State.page = 0;
+    closeSheet();
+    updatePfCount();
+    renderActiveFilterChips();
+    reloadCurrentPage();
+  });
+
+  clearBtn?.addEventListener('click', () => {
+    State.filterCategory = null; State.filterPriceMin = null; State.filterPriceMax = null;
+    State.filterInStock = false; State.filterBestseller = false; State.filterCustomizable = false;
+    State.page = 0;
+    renderCategoryChips();
+    syncFilterSheetFromState();
+    updatePfCount();
+    renderActiveFilterChips();
+    reloadCurrentPage();
+  });
+}
 
 window.searchPageSearch = () => {
   const q = document.getElementById('searchPageInput')?.value.trim();
