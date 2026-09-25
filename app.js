@@ -1045,15 +1045,18 @@ function renderNav() {
 
 function initMobileMenu() {
   const btn = document.getElementById('menuToggle');
+  const navBtn = document.getElementById('appNavMenuBtn');
   const drawer = document.getElementById('mobileDrawer');
   const backdrop = document.getElementById('drawerBackdrop');
-  if (!btn || !drawer) return;
-  btn.addEventListener('click', () => {
+  if (!drawer) return;
+  const toggleDrawer = () => {
     const open = drawer.classList.toggle('drawer--open');
-    btn.setAttribute('aria-expanded', open);
+    btn?.setAttribute('aria-expanded', open);
     backdrop?.classList.toggle('is-visible', open);
     document.body.style.overflow = open ? 'hidden' : '';
-  });
+  };
+  btn?.addEventListener('click', toggleDrawer);
+  navBtn?.addEventListener('click', toggleDrawer);
   drawer.querySelector('.drawer-close')?.addEventListener('click', closeMobileMenu);
   backdrop?.addEventListener('click', closeMobileMenu);
   document.addEventListener('keydown', (e) => {
@@ -1240,7 +1243,8 @@ function initHeroParticles() {
   const c = document.getElementById('heroParticles');
   if (!c) return;
   const chars = ['🧵','🪡','✂️','🌸','⭐','💛','🎀','🌿','💎'];
-  for (let i = 0; i < 20; i++) {
+  const count = window.innerWidth <= 760 ? 9 : 20;
+  for (let i = 0; i < count; i++) {
     const s = document.createElement('span');
     s.className = 'particle';
     s.textContent = chars[i % chars.length];
@@ -1711,7 +1715,7 @@ function setPage(id) {
 
 function updateActiveNav() {
   const cur = Router.current();
-  $$('.nav-link,.drawer-link').forEach(a => {
+  $$('.nav-link,.drawer-link,.app-nav-item[data-route]').forEach(a => {
     const r = a.dataset.route || a.getAttribute('href')?.slice(1);
     a.classList.toggle('active', r === cur);
   });
