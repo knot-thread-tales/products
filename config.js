@@ -3,6 +3,18 @@
 // ============================================================
 
 const CONFIG = {
+  site: {
+    // Used to build absolute, shareable product links (Meta catalog export,
+    // "Share this product" button). Update this if you ever move off
+    // GitHub Pages or add a custom domain.
+    baseUrl: 'https://knot-thread-tales.github.io/products/',
+    // Optional: a real photo for the "Our Story" section on the About page
+    // (currently shows a placeholder emoji instead of a photo, which reads
+    // as unfinished/untrustworthy). Upload a real photo of your workspace
+    // or hands-at-work to your Supabase Storage bucket, then paste its
+    // public URL here. Leave empty to keep the emoji placeholder.
+    aboutImage: '',
+  },
   supabase: {
     url: 'https://ktsvofdifhhitlhzgsut.supabase.co',
     anonKey: 'sb_publishable_4vqZsp517MJ_jsJiLvOY_w_6xoXt5G9',

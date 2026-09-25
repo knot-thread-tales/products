@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://knot-thread-tales.github.io/products/sitemap.xml

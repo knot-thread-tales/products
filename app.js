@@ -332,64 +332,99 @@ function initFloatingWhatsApp() {
   }, 4000);
 }
 
-// ─── Live Visitor Counter ───────────────────────────────────
-function initLiveVisitors() {
-  const el = document.getElementById('liveVisitors');
-  if (!el) return;
-  const base = 18 + Math.floor(Math.random() * 15);
-  let count = base;
-  el.textContent = count;
-  setInterval(() => {
-    const delta = Math.random() > 0.5 ? 1 : -1;
-    count = Math.max(10, Math.min(60, count + delta));
-    el.textContent = count;
-  }, 5000);
-}
-
 // ─── Offer Countdown Timer ────────────────────────────────────
-function initCountdown() {
+// Genuine countdown: reads the earliest active discount announcement's
+// ends_at from Supabase. Shows nothing at all if no real offer is
+// currently running — no fabricated "today only" timer that never expires.
+async function initCountdown() {
+  const wrap = document.querySelector('.hero__offer');
   const el = document.getElementById('offerCountdown');
-  if (!el) return;
-  const end = new Date(); end.setHours(23, 59, 59, 0);
+  if (!el || !wrap) return;
+  wrap.style.display = 'none';
+
+  let offer;
+  try {
+    const rows = await db.from('announcements')
+      .select('message,ends_at')
+      .eq('type', 'discount')
+      .eq('is_active', true)
+      .order('ends_at', { ascending: true })
+      .limit(5)
+      .execute();
+    const now = Date.now();
+    offer = (rows || []).find(r => r.ends_at && new Date(r.ends_at).getTime() > now);
+  } catch (err) {
+    console.error('Countdown fetch failed:', err);
+    return;
+  }
+  if (!offer) return; // no real active offer — leave the block hidden
+
+  const labelEl = wrap.querySelector('.hero__offer-label');
+  if (labelEl && offer.message) labelEl.textContent = `🔥 ${offer.message}`;
+  const end = new Date(offer.ends_at).getTime();
+
   function tick() {
-    const now = new Date();
-    let diff = Math.max(0, end - now);
-    const h = Math.floor(diff / 3600000); diff %= 3600000;
-    const m = Math.floor(diff / 60000); diff %= 60000;
-    const s = Math.floor(diff / 1000);
+    const diff = end - Date.now();
+    if (diff <= 0) { wrap.style.display = 'none'; clearInterval(timer); return; }
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
     el.innerHTML = `<span>${String(h).padStart(2,'0')}</span>:<span>${String(m).padStart(2,'0')}</span>:<span>${String(s).padStart(2,'0')}</span>`;
   }
+  wrap.style.display = '';
   tick();
-  setInterval(tick, 1000);
+  const timer = setInterval(tick, 1000);
 }
 
-// ─── Recently Viewed Ticker ───────────────────────────────────
-const recentBuys = [
-  'Priya from Hyderabad ordered Crochet Flower Bouquet',
-  'Ananya from Mumbai ordered Amigurumi Bear Set',
-  'Sneha from Bangalore ordered Personalised Name Keychain',
-  'Divya from Chennai ordered Crochet Baby Booties',
-  'Kavya from Delhi ordered Macramé Wall Hanging',
-  'Pooja from Pune ordered Pet Collar (Crochet)',
-  'Ritu from Kolkata ordered Custom Wedding Gifting Box',
-  'Meera from Jaipur ordered Embroidery Hoop Art',
-];
-function initBuyTicker() {
+// ─── Recent Activity Ticker ────────────────────────────────────
+// Genuine social proof: pulls the most recent admin-approved reviews
+// (real customers, real orders, moderated before going live) instead of
+// a hardcoded list of invented names. Hides itself if there's nothing
+// real to show yet — a quiet storefront beats a fake-looking one.
+async function initBuyTicker() {
+  const wrap = document.querySelector('.hero-announce');
   const el = document.getElementById('buyTicker');
-  if (!el) return;
+  if (!el || !wrap) return;
+  wrap.style.display = 'none';
+
+  let items = [];
+  try {
+    const reviews = await db.from('reviews')
+      .select('customer_name,product_id,created_at')
+      .eq('approved', true)
+      .order('created_at', { ascending: false })
+      .limit(15)
+      .execute();
+    const ids = [...new Set((reviews || []).map(r => r.product_id).filter(Boolean))];
+    let products = [];
+    if (ids.length) {
+      products = await db.from('products').select('id,name').in('id', ids).execute();
+    }
+    const nameById = new Map((products || []).map(p => [p.id, p.name]));
+    items = (reviews || [])
+      .map(r => ({ name: r.customer_name, product: nameById.get(r.product_id) }))
+      .filter(r => r.name && r.product);
+  } catch (err) {
+    console.error('Buy ticker fetch failed:', err);
+    return;
+  }
+  if (!items.length) return; // no real reviews yet — stay hidden, don't fabricate
+
+  wrap.style.display = '';
   let i = 0;
   function show() {
     el.classList.remove('ticker--in');
     el.classList.add('ticker--out');
     setTimeout(() => {
-      el.textContent = '🛍️ ' + recentBuys[i % recentBuys.length];
+      const it = items[i % items.length];
+      el.textContent = `⭐ ${it.name} loved their ${it.product}`;
       el.classList.remove('ticker--out');
       el.classList.add('ticker--in');
       i++;
     }, 400);
   }
   show();
-  setInterval(show, 4000);
+  if (items.length > 1) setInterval(show, 4500);
 }
 
 // ─── Image Slider / Gallery Component ─────────────────────────
@@ -725,10 +760,44 @@ async function submitOrder(e) {
   const unitPrice = Number(p.offer_price || p.price);
   const display = formatPrice(unitPrice);
 
+  closeModal('orderModal');
+  fireConfetti();
+  showToast('Order sent! Opening WhatsApp… 🎉');
+
+  // Insert first so we have a real DB id to build a matchable order
+  // reference from. If the insert fails (offline, RLS, etc.) fall back to a
+  // timestamp-based reference so the flow never breaks — it just won't be
+  // matchable to an admin row.
+  let orderRef;
+  try {
+    const inserted = await db.from('orders').insert({
+      product_id: p.id,
+      product_code: p.product_code || null,
+      product_name: p.name,
+      unit_price: unitPrice,
+      quantity: Number(qty) || 1,
+      customer_name: name,
+      customer_phone: phone,
+      customer_address: address,
+      customer_pincode: pincode,
+      customization_notes: notes || null,
+      status: 'pending',
+    });
+    orderRef = `KTT-${String(inserted?.id ?? '').padStart(4, '0')}`;
+  } catch (err) {
+    // Order still proceeds via WhatsApp even if logging fails, but log the
+    // real reason so it's visible in devtools instead of silently vanishing.
+    console.error('Order insert failed:', err);
+    orderRef = `KTT-${Date.now().toString(36).toUpperCase()}`;
+  }
+  State.lastOrderRef = orderRef;
+
   const msg = encodeURIComponent(
 `Hello Knot & Thread Tales! 🌸
 
 I would like to place an order.
+
+*Order Reference:* ${orderRef}
 
 *Product Details:*
 Product Code: ${p.product_code || 'KTT-' + p.id}
@@ -747,30 +816,6 @@ ${notes || 'None'}
 
 Please confirm availability and payment instructions. 🙏`
   );
-
-  closeModal('orderModal');
-  fireConfetti();
-  showToast('Order sent! Opening WhatsApp… 🎉');
-
-  try {
-    await db.from('orders').insert({
-      product_id: p.id,
-      product_code: p.product_code || null,
-      product_name: p.name,
-      unit_price: unitPrice,
-      quantity: Number(qty) || 1,
-      customer_name: name,
-      customer_phone: phone,
-      customer_address: address,
-      customer_pincode: pincode,
-      customization_notes: notes || null,
-      status: 'pending',
-    });
-  } catch (err) {
-    // Order still proceeds via WhatsApp even if logging fails, but log the
-    // real reason so it's visible in devtools instead of silently vanishing.
-    console.error('Order insert failed:', err);
-  }
 
   setTimeout(() => {
     openPaymentModal();
@@ -793,9 +838,12 @@ async function openPaymentModal() {
 
   const m = document.getElementById('paymentModal');
   if (!m) return;
+  const refEl = m.querySelector('.payment-order-ref');
+  if (refEl) refEl.textContent = State.lastOrderRef || '';
   m.querySelector('.payment-upi-id').textContent = ps.upi_id;
   m.querySelector('.payment-merchant').textContent = ps.merchant_name;
   const qrImg = m.querySelector('.payment-qr');
+  const upiNote = encodeURIComponent(State.lastOrderRef || 'KTT order');
   if (qrImg) {
     if (ps.qr_image) {
       qrImg.dataset.raw = ps.qr_image;
@@ -805,7 +853,7 @@ async function openPaymentModal() {
       qrImg.src = driveImg(ps.qr_image);
     } else {
       qrImg.onerror = null;
-      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=upi://pay?pa=${encodeURIComponent(ps.upi_id)}&pn=${encodeURIComponent(ps.merchant_name)}`;
+      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=upi://pay?pa=${encodeURIComponent(ps.upi_id)}&pn=${encodeURIComponent(ps.merchant_name)}&tn=${upiNote}`;
     }
   }
   openModal('paymentModal');
@@ -817,6 +865,20 @@ function copyUPI() {
   navigator.clipboard.writeText(upi)
     .then(() => showToast('✅ UPI ID copied!'))
     .catch(() => showToast('UPI: ' + upi));
+}
+
+// Turns the previously decorative "Transaction Reference" field into a real
+// confirmation step: it sends the UTR straight back to WhatsApp tagged with
+// the same order reference shown above, so it lands in the same thread as
+// the original order and is easy to match to the pending row in admin.
+function confirmPayment() {
+  const utr = document.getElementById('txnRef')?.value.trim();
+  const ref = State.lastOrderRef || 'unknown';
+  const msg = encodeURIComponent(
+    `Payment done ✅\n\nOrder Reference: ${ref}\nUTR / Transaction Reference: ${utr || 'Not provided — screenshot attached'}\n\nSharing my payment confirmation for this order.`
+  );
+  window.open(`https://wa.me/${CONFIG.whatsapp.number}?text=${msg}`, '_blank');
+  closeModal('paymentModal');
 }
 
 function downloadQR() {
@@ -900,6 +962,7 @@ async function initApp() {
 
   renderNav();
   renderAnnouncementBar();
+  loadTrustStats();
 
   Router.on('/', renderHome);
   Router.on('/products', renderProductsPage);
@@ -911,6 +974,11 @@ async function initApp() {
   Router.on('/privacy', renderPrivacyPage);
   Router.on('/terms', renderTermsPage);
   Router.on('/category/:slug', renderCategoryPage);
+  // Deep link for a single product — renders the products page as a
+  // backdrop, then opens that product's modal on top. This is what makes
+  // a product shareable via a real URL (Meta catalog, Pinterest, a direct
+  // WhatsApp link) instead of only being reachable by clicking a card.
+  Router.on('/product/:id', (params) => { renderProductsPage(); openProductModal(params.get('id')); });
 
   Router.dispatch();
 
@@ -923,9 +991,23 @@ async function initApp() {
   initBuyTicker();
 }
 
+function shareProduct(id, name) {
+  const url = `${location.origin}${location.pathname}#/product/${id}`;
+  if (navigator.share) {
+    navigator.share({ title: name || 'Knot & Thread Tales', url }).catch(() => {});
+    return;
+  }
+  navigator.clipboard.writeText(url)
+    .then(() => showToast('🔗 Product link copied!'))
+    .catch(() => showToast(url));
+}
+
 function globalClickHandler(e) {
   const orderBtn = e.target.closest('.product-card__order, .btn--order');
   if (orderBtn && !orderBtn.disabled) { handleOrderClick(orderBtn.dataset.id); return; }
+
+  const shareBtn = e.target.closest('.pmodal-share');
+  if (shareBtn) { shareProduct(shareBtn.dataset.id, shareBtn.dataset.name); return; }
 
   const quickBtn = e.target.closest('.quick-view-btn');
   if (quickBtn) { e.stopPropagation(); openProductModal(quickBtn.dataset.id); return; }
@@ -1017,8 +1099,93 @@ async function renderHome() {
   ]);
   initParallax();
   initInstagramSection();
-  initLiveVisitors();
   initCountdown();
+}
+
+// ─── Trust Stats (real numbers, not the old hardcoded "2000+ happy
+// customers / 4.9★ / 2000+ reviews" claims) ────────────────────
+async function loadTrustStats() {
+  let products = [], reviews = [], orders = [];
+  try {
+    [products, reviews, orders] = await Promise.all([
+      db.from('products').select('id').execute().catch(() => []),
+      db.from('reviews').select('rating').eq('approved', true).execute().catch(() => []),
+      db.from('orders').select('id').execute().catch(() => []),
+    ]);
+  } catch { /* leave defaults */ }
+
+  const reviewCount = reviews.length;
+  const avgRating = reviewCount ? (reviews.reduce((s, r) => s + Number(r.rating || 0), 0) / reviewCount) : null;
+
+  State.trustStats = {
+    productCount: products.length,
+    orderCount: orders.length,
+    reviewCount,
+    avgRating,
+  };
+  renderTrustStats();
+}
+
+function starString(avg) {
+  const rounded = Math.round(avg);
+  return '★'.repeat(Math.max(0, Math.min(5, rounded))) + '☆'.repeat(5 - Math.max(0, Math.min(5, rounded)));
+}
+
+function renderTrustStats() {
+  const s = State.trustStats;
+  if (!s) return;
+
+  const statOrders = document.getElementById('statOrders');
+  const statOrdersLabel = document.getElementById('statOrdersLabel');
+  if (statOrders && statOrdersLabel) {
+    if (s.orderCount > 0) { statOrders.textContent = `${s.orderCount}+`; statOrdersLabel.textContent = 'Orders Placed'; }
+    else { statOrders.textContent = 'New'; statOrdersLabel.textContent = 'Store Just Launched'; }
+  }
+  const statProducts = document.getElementById('statProducts');
+  if (statProducts) statProducts.textContent = s.productCount > 0 ? `${s.productCount}+` : 'Coming Soon';
+
+  const ratingWrap = document.getElementById('statRatingWrap');
+  const statRating = document.getElementById('statRating');
+  const statRatingLabel = document.getElementById('statRatingLabel');
+  if (ratingWrap && statRating && statRatingLabel) {
+    if (s.reviewCount > 0) {
+      ratingWrap.style.display = '';
+      statRating.textContent = `${s.avgRating.toFixed(1)}★`;
+      statRatingLabel.textContent = `Avg Rating (${s.reviewCount})`;
+    } else {
+      ratingWrap.style.display = 'none';
+    }
+  }
+
+  const heroStars = document.getElementById('heroStars');
+  if (heroStars) {
+    heroStars.innerHTML = s.reviewCount > 0
+      ? `${starString(s.avgRating)} <span>${s.avgRating.toFixed(1)} / 5</span>`
+      : '';
+    heroStars.style.display = s.reviewCount > 0 ? '' : 'none';
+  }
+
+  const revStars = document.getElementById('reviewsPageStars');
+  const revAvg = document.getElementById('reviewsPageAvg');
+  const revCount = document.getElementById('reviewsPageCount');
+  const revSummary = document.getElementById('reviewsPageSummary');
+  if (revSummary && revStars && revAvg && revCount) {
+    if (s.reviewCount > 0) {
+      revSummary.style.display = '';
+      revStars.textContent = starString(s.avgRating);
+      revAvg.textContent = `${s.avgRating.toFixed(1)} / 5`;
+      revCount.textContent = `(${s.reviewCount} review${s.reviewCount === 1 ? '' : 's'})`;
+    } else {
+      revSummary.style.display = 'none';
+    }
+  }
+
+  // About page stats — reuse the same real order count, plus the real
+  // category count (State.categories is loaded once at app init).
+  const aboutOrders = document.getElementById('aboutOrders');
+  if (aboutOrders) aboutOrders.textContent = s.orderCount > 0 ? `${s.orderCount}+` : 'New';
+  const aboutCategories = document.getElementById('aboutCategories');
+  if (aboutCategories) aboutCategories.textContent = (State.categories || []).length || '—';
 }
 
 async function renderHero() {
@@ -1046,15 +1213,14 @@ async function renderHero() {
         <div class="hero__trust">
           <span>🎨 100% Handmade</span><span>✨ Customizable</span>
           <span>📦 Pan India Delivery</span>
-          <span class="hero__live"><span class="live-dot"></span> <span id="liveVisitors">--</span> viewing now</span>
         </div>
       </div>
       <div class="hero__visual" aria-hidden="true">
         <div class="hero__visual-ring"></div>
         <div class="hero__visual-card">
-          <div class="hero__visual-badge">🧶 New Collection 2025</div>
+          <div class="hero__visual-badge">🧶 New Collection ${new Date().getFullYear()}</div>
           <div class="hero__visual-emoji">🧶<br>🎀<br>🌸</div>
-          <div class="hero__visual-stars">★★★★★ <span>4.9 / 5</span></div>
+          <div class="hero__visual-stars" id="heroStars"></div>
         </div>
       </div>
     </div>`;
@@ -1062,7 +1228,7 @@ async function renderHero() {
   initHeroParticles();
   initBuyTicker();
   initCountdown();
-  initLiveVisitors();
+  renderTrustStats();
 
   hero.querySelectorAll('.hero__eyebrow, .hero__title, .hero__sub, .hero__offer, .hero__actions, .hero__trust').forEach((el, i) => {
     el.style.animationDelay = `${i * 0.13}s`;
@@ -1326,6 +1492,9 @@ async function openProductModal(id) {
           <button class="btn btn--primary btn--lg btn--order w-full" data-id="${p.id}" ${!p.in_stock?'disabled':''}>
             💬 ${p.in_stock ? 'Order via WhatsApp' : 'Out of Stock'}
           </button>
+          <button class="btn btn--outline btn--lg pmodal-share w-full" data-id="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;">
+            🔗 Share this product
+          </button>
           <p class="pmodal-assurance">🔒 Safe & Secure · ✂️ Handcrafted · 🎀 Gift-ready packaging</p>
         </div>
       </div>
@@ -1469,7 +1638,13 @@ async function searchProducts() {
 }
 
 // ─── Page: About ──────────────────────────────────────────────
-function renderAboutPage() { setPage('about-page'); }
+function renderAboutPage() {
+  setPage('about-page');
+  const imgBox = document.querySelector('.about-story-img');
+  if (imgBox && CONFIG.site?.aboutImage && !imgBox.querySelector('img')) {
+    imgBox.innerHTML = `<img src="${CONFIG.site.aboutImage}" alt="Knot & Thread Tales — our workspace" loading="lazy" style="width:100%;height:100%;object-fit:cover;">`;
+  }
+}
 
 // ─── Page: FAQ ────────────────────────────────────────────────
 async function renderFaqPage() {
@@ -1602,6 +1777,7 @@ window.closeModal          = closeModal;
 window.submitOrder         = submitOrder;
 window.openPaymentModal    = openPaymentModal;
 window.copyUPI             = copyUPI;
+window.confirmPayment      = confirmPayment;
 window.downloadQR          = downloadQR;
 window.shareQR             = shareQR;
 window.handleContactForm   = handleContactForm;

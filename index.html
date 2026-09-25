@@ -8,14 +8,14 @@
   <meta name="keywords" content="handmade gifts, crochet, embroidery, personalized gifts, pet accessories, home decor, corporate gifts, wedding gifts, India">
   <meta name="author" content="Knot & Thread Tales">
   <meta name="robots" content="index, follow">
-  <link rel="canonical" href="https://knotandthreadtales.com/">
+  <link rel="canonical" href="https://knot-thread-tales.github.io/products/">
 
   <!-- Open Graph -->
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://knotandthreadtales.com/">
+  <meta property="og:url" content="https://knot-thread-tales.github.io/products/">
   <meta property="og:title" content="Knot & Thread Tales – Premium Handmade Gifts">
   <meta property="og:description" content="Premium handmade crochet, embroidery & personalized gifts. Crafted with love, shipped pan India.">
-  <meta property="og:image" content="https://knotandthreadtales.com/og-image.jpg">
+  <meta property="og:image" content="https://knot-thread-tales.github.io/products/og-image.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:site_name" content="Knot & Thread Tales">
@@ -25,7 +25,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Knot & Thread Tales – Premium Handmade Gifts">
   <meta name="twitter:description" content="Premium handmade crochet, embroidery & personalized gifts. Crafted with love, shipped pan India.">
-  <meta name="twitter:image" content="https://knotandthreadtales.com/og-image.jpg">
+  <meta name="twitter:image" content="https://knot-thread-tales.github.io/products/og-image.jpg">
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='28'%3E🧶%3C/text%3E%3C/svg%3E">
@@ -45,8 +45,8 @@
     "@context": "https://schema.org",
     "@type": "Organization",
     "name": "Knot & Thread Tales",
-    "url": "https://knotandthreadtales.com",
-    "logo": "https://knotandthreadtales.com/og-image.jpg",
+    "url": "https://knot-thread-tales.github.io/products/",
+    "logo": "https://knot-thread-tales.github.io/products/og-image.jpg",
     "description": "Premium handmade crochet, embroidery, and personalized gifts crafted with love.",
     "contactPoint": {
       "@type": "ContactPoint",
@@ -83,10 +83,10 @@
     "@context": "https://schema.org",
     "@type": "WebSite",
     "name": "Knot & Thread Tales",
-    "url": "https://knotandthreadtales.com",
+    "url": "https://knot-thread-tales.github.io/products/",
     "potentialAction": {
       "@type": "SearchAction",
-      "target": "https://knotandthreadtales.com/#/search?q={search_term_string}",
+      "target": "https://knot-thread-tales.github.io/products/#/search?q={search_term_string}",
       "query-input": "required name=search_term_string"
     }
   }
@@ -223,9 +223,9 @@
       <!-- Stats -->
       <div class="container">
         <div class="stats-row">
-          <div class="stat"><div class="stat-num">2000+</div><div class="stat-label">Happy Customers</div></div>
-          <div class="stat"><div class="stat-num">500+</div><div class="stat-label">Unique Products</div></div>
-          <div class="stat"><div class="stat-num">4.9★</div><div class="stat-label">Average Rating</div></div>
+          <div class="stat"><div class="stat-num" id="statOrders">—</div><div class="stat-label" id="statOrdersLabel">Orders Placed</div></div>
+          <div class="stat"><div class="stat-num" id="statProducts">—</div><div class="stat-label">Unique Products</div></div>
+          <div class="stat" id="statRatingWrap"><div class="stat-num" id="statRating">—</div><div class="stat-label" id="statRatingLabel">Average Rating</div></div>
           <div class="stat"><div class="stat-num">100%</div><div class="stat-label">Handcrafted</div></div>
         </div>
       </div>
@@ -438,10 +438,8 @@
           </div>
         </div>
         <div class="stats-row" style="margin-top:48px;">
-          <div class="stat"><div class="stat-num">4+</div><div class="stat-label">Years of Crafting</div></div>
-          <div class="stat"><div class="stat-num">2000+</div><div class="stat-label">Orders Delivered</div></div>
-          <div class="stat"><div class="stat-num">50+</div><div class="stat-label">Corporate Clients</div></div>
-          <div class="stat"><div class="stat-num">8</div><div class="stat-label">Product Categories</div></div>
+          <div class="stat"><div class="stat-num" id="aboutOrders">—</div><div class="stat-label">Orders Delivered</div></div>
+          <div class="stat"><div class="stat-num" id="aboutCategories">—</div><div class="stat-label">Product Categories</div></div>
         </div>
       </div>
       <div class="section--sm" style="background:linear-gradient(135deg,#f5ebe0,var(--c-bg));margin-top:48px;">
@@ -556,10 +554,10 @@
         <div class="container">
           <h1>Customer Reviews</h1>
           <p>Real stories from real customers who love their handmade treasures.</p>
-          <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;">
-            <span style="font-size:1.5rem;color:#f59e0b;">★★★★★</span>
-            <span style="font-weight:700;font-size:1.1rem;">4.9 / 5</span>
-            <span style="color:var(--c-text-3)">(2000+ reviews)</span>
+          <div id="reviewsPageSummary" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;">
+            <span style="font-size:1.5rem;color:#f59e0b;" id="reviewsPageStars">☆☆☆☆☆</span>
+            <span style="font-weight:700;font-size:1.1rem;" id="reviewsPageAvg"></span>
+            <span style="color:var(--c-text-3)" id="reviewsPageCount"></span>
           </div>
         </div>
       </div>
@@ -779,7 +777,8 @@
     <div class="modal-box" style="width:min(480px,96vw);">
       <button class="modal-close" onclick="closeModal('paymentModal')" aria-label="Close payment details">&times;</button>
       <h2 class="modal-title">💳 Payment Details</h2>
-      <p style="text-align:center;color:var(--c-text-2);margin-bottom:20px;font-size:.9rem;">Scan the QR or copy the UPI ID to pay. Share your transaction reference on WhatsApp to confirm your order.</p>
+      <p style="text-align:center;color:var(--c-text-2);margin-bottom:8px;font-size:.9rem;">Scan the QR or copy the UPI ID to pay. Share your transaction reference on WhatsApp to confirm your order.</p>
+      <p style="text-align:center;margin-bottom:20px;font-size:.85rem;">Your order reference: <strong class="payment-order-ref" style="color:var(--c-primary);"></strong> — add this as your UPI payment note if your app allows it.</p>
       <div class="payment-upi-wrap">
         <img class="payment-qr" src="" alt="UPI QR Code" width="220" height="220">
         <p class="payment-merchant"></p>
@@ -805,7 +804,7 @@
         <label for="txnRef">Transaction Reference / UTR Number</label>
         <input type="text" id="txnRef" placeholder="e.g. 123456789012">
       </div>
-      <button class="btn btn--primary w-full" onclick="closeModal('paymentModal')" style="margin-top:8px;">Done ✓</button>
+      <button class="btn btn--primary w-full" onclick="confirmPayment()" style="margin-top:8px;">✅ I've Paid — Confirm on WhatsApp</button>
     </div>
   </div>
 

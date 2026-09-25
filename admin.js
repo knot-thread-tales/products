@@ -266,6 +266,7 @@ function renderTable(cfg, allRows) {
         <span class="admin-toolbar__count">${rows.length} of ${allRows.length}</span>
         <button class="admin-btn-sm" id="exportCsvBtn" ${!allRows.length ? 'disabled' : ''}>⬇ CSV</button>
         <button class="admin-btn-sm" id="exportXlsxBtn" ${!allRows.length ? 'disabled' : ''}>⬇ Excel</button>
+        ${State.view === 'products' ? `<button class="admin-btn-sm" id="exportMetaBtn" ${!allRows.length ? 'disabled' : ''}>⬇ Meta Catalog CSV</button>` : ''}
       </div>
     </div>
     ${!rows.length
@@ -316,6 +317,7 @@ function renderTable(cfg, allRows) {
 
   $('#exportCsvBtn')?.addEventListener('click', () => exportTable(cfg, 'csv'));
   $('#exportXlsxBtn')?.addEventListener('click', () => exportTable(cfg, 'xlsx'));
+  $('#exportMetaBtn')?.addEventListener('click', () => exportMetaCatalog(allRows));
 }
 
 function exportTable(cfg, format) {
@@ -354,6 +356,59 @@ function downloadBlob(blob, filename) {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── Meta (Instagram/Facebook Shop) catalog export ────────────
+// Builds a CSV in Meta Commerce Manager's required feed format:
+// id, title, description, availability, condition, price, link, image_link, brand.
+// Upload this file under Commerce Manager → Catalog → Add items → Data feed.
+async function exportMetaCatalog(products) {
+  if (!products.length) return;
+  const ids = products.map(p => p.id);
+  let images = [];
+  try {
+    const { data, error } = await sb.from('product_images')
+      .select('product_id,image_url')
+      .in('product_id', ids)
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    images = data || [];
+  } catch (err) {
+    toast('Could not load images — export will have blank image links.', 'error');
+  }
+  const firstImageByProduct = new Map();
+  images.forEach(img => { if (!firstImageByProduct.has(img.product_id)) firstImageByProduct.set(img.product_id, img.image_url); });
+
+  const base = CONFIG.site?.baseUrl?.replace(/\/$/, '') || '';
+  const headers = ['id', 'title', 'description', 'availability', 'condition', 'price', 'link', 'image_link', 'brand'];
+  const rows = products.map(p => {
+    const price = Number(p.offer_price || p.price || 0).toFixed(2);
+    const img = firstImageByProduct.get(p.id) || '';
+    return [
+      p.product_code || `KTT-${p.id}`,
+      p.name || '',
+      (p.description || p.name || '').replace(/\s+/g, ' ').trim(),
+      p.in_stock ? 'in stock' : 'out of stock',
+      'new',
+      `${price} INR`,
+      `${base}/#/product/${p.id}`,
+      img,
+      CONFIG.business?.name || '',
+    ];
+  });
+
+  const escCsv = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers, ...rows].map(row => row.map(escCsv).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  downloadBlob(blob, `meta-catalog-${new Date().toISOString().slice(0,10)}.csv`);
+
+  const missingImages = rows.filter(r => !r[7]).length;
+  toast(missingImages
+    ? `Exported ${rows.length} products (${missingImages} missing an image — add one before uploading).`
+    : `Exported ${rows.length} products for Meta Catalog.`);
 }
 
 function colLabel(cfg, key) {
