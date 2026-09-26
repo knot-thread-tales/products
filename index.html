@@ -28,8 +28,16 @@
   <meta name="twitter:image" content="https://knot-thread-tales.github.io/products/og-image.jpg">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='28'%3E🧶%3C/text%3E%3C/svg%3E">
-  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='28'%3E🧶%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#A66E4A">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Knot & Thread">
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -160,6 +168,8 @@
     <a href="#/reviews" data-route="/reviews" class="drawer-link">Reviews</a>
     <a href="#/faq" data-route="/faq" class="drawer-link">FAQ</a>
     <a href="#/contact" data-route="/contact" class="drawer-link">Contact</a>
+    <div class="drawer-divider" id="installDivider" hidden></div>
+    <button type="button" id="installAppBtn" class="drawer-link" hidden>📲 Install App</button>
   </div>
 
   <!-- ─── Main ────────────────────────────────── -->
@@ -904,5 +914,12 @@
   <!-- Scripts -->
   <script src="config.js?v=20260721"></script>
   <script src="app.js?v=20260721"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => { /* offline support only — safe to ignore */ });
+      });
+    }
+  </script>
 </body>
 </html>

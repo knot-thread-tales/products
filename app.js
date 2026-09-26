@@ -993,6 +993,36 @@ async function initApp() {
   initFloatingWhatsApp();
   initBuyTicker();
   initProductFilters();
+  initInstallPrompt();
+}
+
+function initInstallPrompt() {
+  let deferredPrompt = null;
+  const btn = document.getElementById('installAppBtn');
+  const divider = document.getElementById('installDivider');
+  if (!btn) return;
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    btn.hidden = false;
+    if (divider) divider.hidden = false;
+  });
+
+  btn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    btn.hidden = true;
+    if (divider) divider.hidden = true;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    btn.hidden = true;
+    if (divider) divider.hidden = true;
+    deferredPrompt = null;
+  });
 }
 
 function shareProduct(id, name) {
@@ -1766,6 +1796,22 @@ function reloadCurrentPage() {
   Router.current() === '/search' ? searchProducts() : loadAndRenderProducts();
 }
 
+// A category filter is embedded in the URL itself (/category/:slug). If we
+// change or clear State.filterCategory while sitting on a category route (or
+// /products) without also updating the hash, the URL and State fall out of
+// sync — a refresh (or back/forward) re-derives State from the stale URL and
+// silently restores the old category. Route through the hash whenever the
+// resulting page would need a different URL; only fall back to an in-place
+// reload when the current route already matches the desired one.
+function commitFilterChange() {
+  const cur = Router.current();
+  if (cur === '/products' || cur.startsWith('/category/')) {
+    const desired = State.filterCategory ? `/category/${State.filterCategory}` : '/products';
+    if (cur !== desired) { Router.navigate(desired); return; }
+  }
+  reloadCurrentPage();
+}
+
 window.applySort = (val) => {
   const [col, dir] = val.split(':');
   State.sortBy = col; State.sortAsc = dir === 'asc'; State.page = 0;
@@ -1845,7 +1891,7 @@ function renderActiveFilterChips() {
       if (key === 'bestseller') State.filterBestseller = false;
       if (key === 'custom') State.filterCustomizable = false;
       State.page = 0;
-      updatePfCount(); renderActiveFilterChips(); reloadCurrentPage();
+      updatePfCount(); renderActiveFilterChips(); commitFilterChange();
     });
   });
 }
@@ -1913,7 +1959,7 @@ function initProductFilters() {
     closeSheet();
     updatePfCount();
     renderActiveFilterChips();
-    reloadCurrentPage();
+    commitFilterChange();
   });
 
   clearBtn?.addEventListener('click', () => {
@@ -1924,7 +1970,7 @@ function initProductFilters() {
     syncFilterSheetFromState();
     updatePfCount();
     renderActiveFilterChips();
-    reloadCurrentPage();
+    commitFilterChange();
   });
 }
 
