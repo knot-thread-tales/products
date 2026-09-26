@@ -144,7 +144,7 @@ em { font-style: italic; color: var(--c-primary); }
 
 .header-inner {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 24px; height: 68px;
+  gap: 24px; min-height: 68px; flex-wrap: nowrap;
 }
 .header-logo {
   font-family: var(--font-display); font-size: 1.35rem; font-weight: 700;
@@ -153,7 +153,7 @@ em { font-style: italic; color: var(--c-primary); }
 .header-logo span { color: var(--c-primary); }
 .header-logo em { font-size: .72rem; font-style: normal; font-weight: 400; color: var(--c-text-2); display: block; margin-top: -4px; font-family: var(--font-body); }
 
-.header-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.header-nav { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex-shrink: 1; min-width: 0; }
 .nav-link {
   padding: 6px 12px; border-radius: var(--r-full); font-size: .875rem; font-weight: 500;
   color: var(--c-text-2); transition: color var(--t-fast), background var(--t-fast);
@@ -181,7 +181,7 @@ em { font-style: italic; color: var(--c-primary); }
 }
 .menu-toggle:hover { background: var(--c-accent); color: var(--c-primary); }
 
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
   .header-nav { display: none; }
   .menu-toggle { display: flex; }
   .search-bar input { width: 130px; }
@@ -304,7 +304,7 @@ em { font-style: italic; color: var(--c-primary); }
 }
 @keyframes heroReveal { to { opacity: 1; transform: none; } }
 
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
   #hero { min-height: auto; padding: 60px 0 40px; }
   .hero__inner { flex-direction: column; text-align: center; }
   .hero__content { max-width: 100%; }
