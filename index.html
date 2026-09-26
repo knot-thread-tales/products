@@ -376,12 +376,14 @@
          SEARCH PAGE
     ════════════════════════════════════════════ -->
     <div id="search-page" class="page" hidden aria-label="Search">
-      <div class="search-hero container">
-        <h1 id="searchHeading">Search Products</h1>
-        <div class="search-bar-lg" role="search">
-          <label for="searchPageInput" class="sr-only">Search</label>
-          <input type="search" id="searchPageInput" placeholder="Search products, categories…" autocomplete="off" aria-label="Search products">
-          <button class="btn btn--primary" onclick="searchPageSearch()">Search</button>
+      <div class="search-hero">
+        <div class="container">
+          <h1 id="searchHeading">Search Products</h1>
+          <div class="search-bar-lg" role="search">
+            <label for="searchPageInput" class="sr-only">Search</label>
+            <input type="search" id="searchPageInput" placeholder="Search products, categories…" autocomplete="off" aria-label="Search products">
+            <button class="btn btn--primary" onclick="searchPageSearch()">Search</button>
+          </div>
         </div>
       </div>
       <div class="section container">
@@ -399,6 +401,7 @@
               <option value="price:desc">Price ↓</option>
             </select>
           </div>
+          <span class="pf-resultcount" id="pfResultCountSearch"></span>
         </div>
         <div class="products-grid" id="searchGrid" aria-live="polite"></div>
       </div>
@@ -408,9 +411,11 @@
          ABOUT PAGE
     ════════════════════════════════════════════ -->
     <div id="about-page" class="page" hidden aria-label="About Us">
-      <div class="about-hero container">
-        <h1>Our Story</h1>
-        <p>Born from a love of craft and a dream of making every gift meaningful.</p>
+      <div class="about-hero">
+        <div class="container">
+          <h1>Our Story</h1>
+          <p>Born from a love of craft and a dream of making every gift meaningful.</p>
+        </div>
       </div>
       <div class="container">
         <div class="about-story">
@@ -577,10 +582,14 @@
          PRIVACY POLICY PAGE
     ════════════════════════════════════════════ -->
     <div id="privacy-page" class="page" hidden aria-label="Privacy Policy">
-      <div class="container">
-        <div class="policy-content">
+      <div class="page-hero">
+        <div class="container">
           <h1>Privacy Policy</h1>
           <p class="updated">Last updated: January 2025</p>
+        </div>
+      </div>
+      <div class="container">
+        <div class="policy-content">
           <p>At Knot & Thread Tales, your privacy is important to us. This policy explains how we collect, use, and protect your information.</p>
           <h2>Information We Collect</h2>
           <p>When you place an order via WhatsApp or our contact form, we collect your name, phone number, delivery address, and order details. This information is used solely to process and deliver your order.</p>
@@ -609,10 +618,14 @@
          TERMS & CONDITIONS PAGE
     ════════════════════════════════════════════ -->
     <div id="terms-page" class="page" hidden aria-label="Terms and Conditions">
-      <div class="container">
-        <div class="policy-content">
+      <div class="page-hero">
+        <div class="container">
           <h1>Terms &amp; Conditions</h1>
           <p class="updated">Last updated: January 2025</p>
+        </div>
+      </div>
+      <div class="container">
+        <div class="policy-content">
           <p>By using Knot & Thread Tales and placing an order, you agree to the following terms.</p>
           <h2>Products</h2>
           <p>All products are handmade. Minor variations in color, texture, or size may occur between the displayed image and the actual product — this is a natural characteristic of handmade goods and is not considered a defect.</p>

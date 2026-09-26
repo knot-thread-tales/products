@@ -1655,6 +1655,8 @@ async function searchProducts() {
       : `<p class="empty-msg">No products found for "<strong>${esc(State.searchQuery)}</strong>".<br>Try a different keyword.</p>`;
     const h = document.getElementById('searchHeading');
     if (h) h.textContent = `${results.length} result${results.length!==1?'s':''} for "${State.searchQuery}"`;
+    const rc = document.getElementById('pfResultCountSearch');
+    if (rc) rc.textContent = results.length ? `${results.length} item${results.length!==1?'s':''}` : '';
     grid.querySelectorAll('.product-card').forEach(el => observeReveal(el));
     initCardMiniSliders(grid);
   } catch { grid.innerHTML = '<p class="empty-msg">Search failed. Please try again.</p>'; }
