@@ -320,7 +320,7 @@ button.drawer-link { width: 100%; text-align: left; background: none; border: no
   .hero__actions { gap: 10px; }
   .hero__actions .btn { flex: 1 1 auto; }
   .hero__trust { gap: 12px 16px; font-size: .78rem; }
-  .section { padding: clamp(32px, 8vw, 96px) 0; }
+  .section { padding-top: clamp(32px, 8vw, 96px); padding-bottom: clamp(32px, 8vw, 96px); }
 }
 
 /* ─── Why Handmade ─────────────────────────────────────────── */
