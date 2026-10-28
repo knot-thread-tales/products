@@ -1,14 +1,15 @@
 // Knot & Thread Tales — Service Worker
 // Bump this on every deploy that changes cached files, same idea as the
 // ?v=20260721 query strings already used on styles.css/app.js/config.js.
-const CACHE_VERSION = 'ktt-v20260926';
+const CACHE_VERSION = 'ktt-v20261028';
 
 const APP_SHELL = [
   './',
   './index.html',
-  './styles.css?v=20260721',
+  './styles.css?v=20261028',
   './config.js?v=20260721',
   './app.js?v=20260721',
+  './header.js?v=20261028',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

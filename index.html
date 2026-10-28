@@ -45,7 +45,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="styles.css?v=20260721">
+  <link rel="stylesheet" href="styles.css?v=20261028">
 
   <!-- Schema: Organization -->
   <script type="application/ld+json">
@@ -119,9 +119,18 @@
 
         <!-- Desktop Nav -->
         <nav id="mainNav" class="header-nav" aria-label="Main navigation">
-          <ul class="nav-cats">
-            <!-- Populated by JS -->
-          </ul>
+          <div class="nav-shop">
+            <button type="button" class="nav-shop__btn" id="shopMenuBtn" aria-expanded="false" aria-haspopup="true" aria-controls="shopMenu">
+              Shop
+              <svg class="nav-shop__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="shop-menu" id="shopMenu">
+              <ul class="nav-cats">
+                <!-- Populated by JS -->
+              </ul>
+              <a href="#/products" data-route="/products" class="shop-menu__all">Shop all products <span aria-hidden="true">→</span></a>
+            </div>
+          </div>
           <a href="#/about" data-route="/about" class="nav-link">About</a>
           <a href="#/reviews" data-route="/reviews" class="nav-link">Reviews</a>
           <a href="#/contact" data-route="/contact" class="nav-link">Contact</a>
@@ -914,6 +923,7 @@
   <!-- Scripts -->
   <script src="config.js?v=20260721"></script>
   <script src="app.js?v=20260721"></script>
+  <script src="header.js?v=20261028" defer></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
